@@ -1,0 +1,28 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Build output and dependency caches
+node_modules/
+dist/
+build/
+coverage/
+tmp/
+
+# Local runtime state and object-storage data
+runtime-data/
+local-storage/
+private-assets/
+*.sqlite
+
+# Logs and editor files
+*.log
+.idea/
+.vscode/
+
+# Actual delivery archives must never be committed
+*.zip
+*.7z
+*.tar
+*.tar.gz

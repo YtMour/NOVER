@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nover}
+      POSTGRES_USER: ${POSTGRES_USER:-nover}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_HOST_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nover} -d ${POSTGRES_DB:-nover}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - private
+
+  api:
+    build:
+      context: ./server
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      PORT: "8080"
+      DATABASE_URL: postgres://${POSTGRES_USER:-nover}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nover}?sslmode=disable
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      OPERATOR_TOKEN_KEY: ${OPERATOR_TOKEN_KEY:?Set OPERATOR_TOKEN_KEY in .env}
+      REDEEM_HMAC_KEY: ${REDEEM_HMAC_KEY:?Set REDEEM_HMAC_KEY in .env}
+      ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY:?Set ACCESS_TOKEN_KEY in .env}
+      STORAGE_DIR: /var/lib/nover/files
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-524288000}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:5173}
+    volumes:
+      - private-assets:/var/lib/nover/files
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - private
+
+  web:
+    build:
+      context: ./web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:5173:80"
+    networks:
+      - private
+
+volumes:
+  postgres-data:
+  private-assets:
+
+networks:
+  private:
+    driver: bridge
