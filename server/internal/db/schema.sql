@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS tenant_memberships (
     tenant_id TEXT NOT NULL REFERENCES tenants(id),
     user_id TEXT NOT NULL REFERENCES operator_users(id),
     role TEXT NOT NULL CHECK (role IN ('OWNER', 'ADMIN', 'EDITOR', 'FULFILLMENT', 'ANALYST')),
-    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('PENDING', 'ACTIVE', 'SUSPENDED')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, user_id)
@@ -58,6 +58,7 @@ CREATE INDEX IF NOT EXISTS operator_sessions_user_active_idx
 CREATE TABLE IF NOT EXISTS products (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
+    owner_user_id TEXT REFERENCES operator_users(id),
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     detail TEXT NOT NULL DEFAULT '',
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS products (
 
 ALTER TABLE products ADD COLUMN IF NOT EXISTS detail TEXT NOT NULL DEFAULT '';
 ALTER TABLE products ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS owner_user_id TEXT REFERENCES operator_users(id);
 
 -- The MVP originally created ACTIVE/ARCHIVED only. Keep startup migration
 -- idempotent while extending existing deployments with the draft workflow.
@@ -74,6 +76,11 @@ ALTER TABLE products DROP CONSTRAINT IF EXISTS products_status_check;
 ALTER TABLE products
     ADD CONSTRAINT products_status_check
     CHECK (status IN ('DRAFT', 'ACTIVE', 'ARCHIVED'));
+
+ALTER TABLE tenant_memberships DROP CONSTRAINT IF EXISTS tenant_memberships_status_check;
+ALTER TABLE tenant_memberships
+    ADD CONSTRAINT tenant_memberships_status_check
+    CHECK (status IN ('PENDING', 'ACTIVE', 'SUSPENDED'));
 
 CREATE TABLE IF NOT EXISTS assets (
     id TEXT PRIMARY KEY,
@@ -184,6 +191,8 @@ CREATE TABLE IF NOT EXISTS admin_events (
 
 CREATE TABLE IF NOT EXISTS join_applications (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
+    operator_user_id TEXT REFERENCES operator_users(id),
     organization_name TEXT NOT NULL,
     contact_name TEXT NOT NULL,
     email TEXT NOT NULL,
@@ -201,6 +210,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS join_applications_open_email_idx
     WHERE status IN ('PENDING', 'REVIEWING', 'APPROVED');
 CREATE INDEX IF NOT EXISTS join_applications_status_created_idx
     ON join_applications (status, created_at DESC);
+ALTER TABLE join_applications ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE join_applications ADD COLUMN IF NOT EXISTS operator_user_id TEXT REFERENCES operator_users(id);
+CREATE UNIQUE INDEX IF NOT EXISTS join_applications_open_username_idx
+    ON join_applications (LOWER(desired_username))
+    WHERE status IN ('PENDING', 'REVIEWING', 'APPROVED');
 
 CREATE TABLE IF NOT EXISTS platform_settings (
     id TEXT PRIMARY KEY CHECK (id = 'default'),
@@ -231,6 +245,7 @@ ALTER TABLE download_tickets ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DE
 ALTER TABLE download_events ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
 ALTER TABLE admin_events ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
 CREATE INDEX IF NOT EXISTS products_tenant_status_created_idx ON products(tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS products_tenant_owner_idx ON products(tenant_id, owner_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS assets_tenant_product_idx ON assets(tenant_id, product_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS product_images_tenant_product_idx ON product_images(tenant_id, product_id, created_at);
 CREATE INDEX IF NOT EXISTS redeem_codes_tenant_product_status_idx ON redeem_codes(tenant_id, product_id, status);
@@ -243,6 +258,107 @@ CREATE INDEX IF NOT EXISTS entitlements_product_status_idx ON entitlements(produ
 CREATE INDEX IF NOT EXISTS download_tickets_expiry_idx ON download_tickets(expires_at);
 CREATE INDEX IF NOT EXISTS download_events_entitlement_idx ON download_events(entitlement_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS admin_events_resource_idx ON admin_events(resource_type, resource_id, created_at DESC);
+
+-- Tenant-scoped uniqueness and foreign keys make the isolation boundary a
+-- database invariant instead of relying only on every application query.
+CREATE UNIQUE INDEX IF NOT EXISTS products_tenant_id_idx ON products(tenant_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS assets_tenant_id_idx ON assets(tenant_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS product_images_tenant_id_idx ON product_images(tenant_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS redeem_codes_tenant_product_id_idx ON redeem_codes(tenant_id, id, product_id);
+CREATE UNIQUE INDEX IF NOT EXISTS entitlements_tenant_id_idx ON entitlements(tenant_id, id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_owner_tenant_fk') THEN
+        ALTER TABLE products
+            ADD CONSTRAINT products_owner_tenant_fk
+            FOREIGN KEY (tenant_id, owner_user_id)
+            REFERENCES tenant_memberships(tenant_id, user_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_product_tenant_fk') THEN
+        ALTER TABLE assets
+            ADD CONSTRAINT assets_product_tenant_fk
+            FOREIGN KEY (tenant_id, product_id)
+            REFERENCES products(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'product_images_product_tenant_fk') THEN
+        ALTER TABLE product_images
+            ADD CONSTRAINT product_images_product_tenant_fk
+            FOREIGN KEY (tenant_id, product_id)
+            REFERENCES products(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'redeem_codes_product_tenant_fk') THEN
+        ALTER TABLE redeem_codes
+            ADD CONSTRAINT redeem_codes_product_tenant_fk
+            FOREIGN KEY (tenant_id, product_id)
+            REFERENCES products(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entitlements_product_tenant_fk') THEN
+        ALTER TABLE entitlements
+            ADD CONSTRAINT entitlements_product_tenant_fk
+            FOREIGN KEY (tenant_id, product_id)
+            REFERENCES products(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entitlements_redeem_tenant_fk') THEN
+        ALTER TABLE entitlements
+            ADD CONSTRAINT entitlements_redeem_tenant_fk
+            FOREIGN KEY (tenant_id, redeem_code_id, product_id)
+            REFERENCES redeem_codes(tenant_id, id, product_id)
+            DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'redeem_codes_entitlement_tenant_fk') THEN
+        ALTER TABLE redeem_codes
+            ADD CONSTRAINT redeem_codes_entitlement_tenant_fk
+            FOREIGN KEY (tenant_id, entitlement_id)
+            REFERENCES entitlements(tenant_id, id)
+            DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'download_tickets_entitlement_tenant_fk') THEN
+        ALTER TABLE download_tickets
+            ADD CONSTRAINT download_tickets_entitlement_tenant_fk
+            FOREIGN KEY (tenant_id, entitlement_id)
+            REFERENCES entitlements(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'download_tickets_asset_tenant_fk') THEN
+        ALTER TABLE download_tickets
+            ADD CONSTRAINT download_tickets_asset_tenant_fk
+            FOREIGN KEY (tenant_id, asset_id)
+            REFERENCES assets(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'download_events_entitlement_tenant_fk') THEN
+        ALTER TABLE download_events
+            ADD CONSTRAINT download_events_entitlement_tenant_fk
+            FOREIGN KEY (tenant_id, entitlement_id)
+            REFERENCES entitlements(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'download_events_asset_tenant_fk') THEN
+        ALTER TABLE download_events
+            ADD CONSTRAINT download_events_asset_tenant_fk
+            FOREIGN KEY (tenant_id, asset_id)
+            REFERENCES assets(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'join_applications_operator_tenant_fk') THEN
+        ALTER TABLE join_applications
+            ADD CONSTRAINT join_applications_operator_tenant_fk
+            FOREIGN KEY (tenant_id, operator_user_id)
+            REFERENCES tenant_memberships(tenant_id, user_id);
+    END IF;
+END $$;
+
+-- New rows are checked immediately; validating here also protects existing
+-- installations during the idempotent startup migration.
+ALTER TABLE products VALIDATE CONSTRAINT products_owner_tenant_fk;
+ALTER TABLE assets VALIDATE CONSTRAINT assets_product_tenant_fk;
+ALTER TABLE product_images VALIDATE CONSTRAINT product_images_product_tenant_fk;
+ALTER TABLE redeem_codes VALIDATE CONSTRAINT redeem_codes_product_tenant_fk;
+ALTER TABLE entitlements VALIDATE CONSTRAINT entitlements_product_tenant_fk;
+ALTER TABLE entitlements VALIDATE CONSTRAINT entitlements_redeem_tenant_fk;
+ALTER TABLE redeem_codes VALIDATE CONSTRAINT redeem_codes_entitlement_tenant_fk;
+ALTER TABLE download_tickets VALIDATE CONSTRAINT download_tickets_entitlement_tenant_fk;
+ALTER TABLE download_tickets VALIDATE CONSTRAINT download_tickets_asset_tenant_fk;
+ALTER TABLE download_events VALIDATE CONSTRAINT download_events_entitlement_tenant_fk;
+ALTER TABLE download_events VALIDATE CONSTRAINT download_events_asset_tenant_fk;
+ALTER TABLE join_applications VALIDATE CONSTRAINT join_applications_operator_tenant_fk;
 
 -- Public demo catalog. These rows contain descriptions only; no sellable files or credentials.
 INSERT INTO products (id, name, description, detail, status)

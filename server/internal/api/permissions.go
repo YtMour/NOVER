@@ -35,6 +35,11 @@ var platformRolePermissions = map[string][]permission{
 
 func permissionSet(identity operatorIdentity) map[permission]struct{} {
 	result := make(map[permission]struct{})
+	// Pending applicants may inspect their session only; activation is granted
+	// by the approval workflow before any tenant permission is restored.
+	if identity.MembershipStatus != "" && identity.MembershipStatus != "ACTIVE" {
+		return result
+	}
 	for _, item := range tenantRolePermissions[identity.Role] {
 		result[item] = struct{}{}
 	}

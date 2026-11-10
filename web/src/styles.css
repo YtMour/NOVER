@@ -222,7 +222,7 @@
     --shadow-color: #1f282c17;
     --topbar-bg: #f6f6f3e0;
     background: #f6f6f3;
-    font-family: Inter, Segoe UI, Microsoft YaHei, sans-serif
+    font-family: "Noto Sans SC", "Noto Sans", "Source Han Sans SC", "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif
 }
 
 * {
@@ -3007,4 +3007,16 @@ p {
         animation-duration: .01ms !important;
         animation-iteration-count: 1 !important
     }
+}
+
+/* Keep public copy legible with an open CJK/system font stack. */
+.section-kicker,
+.eyebrow {
+    font-size: 11px;
+    letter-spacing: .12em;
+}
+
+.field-note {
+    font-size: 13px;
+    line-height: 1.65;
 }

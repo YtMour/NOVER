@@ -76,7 +76,12 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be uploaded.")
 		return
 	}
-	key := filepath.ToSlash(filepath.Join("assets", id+".blob"))
+	key, err := tenantObjectKey(requestTenantID(r), "assets", id+".blob")
+	if err != nil {
+		a.logError(r, "create asset storage key failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be uploaded.")
+		return
+	}
 	destination := filepath.Join(a.cfg.StorageDir, filepath.FromSlash(key))
 	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
 		a.logError(r, "create asset directory failed", err)
@@ -246,11 +251,12 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be downloaded.")
 		return
 	}
-	if filepath.IsAbs(objectKey) || strings.Contains(filepath.ToSlash(objectKey), "../") {
+	storagePath, validPath := safeStoragePath(a.cfg.StorageDir, objectKey)
+	if !validPath {
 		writeError(w, http.StatusInternalServerError, "asset_path_invalid", "The file could not be downloaded.")
 		return
 	}
-	file, err := os.Open(filepath.Join(a.cfg.StorageDir, filepath.FromSlash(objectKey)))
+	file, err := os.Open(storagePath)
 	if err != nil {
 		a.logError(r, "open asset failed", err)
 		writeError(w, http.StatusNotFound, "asset_unavailable", "The file is temporarily unavailable.")

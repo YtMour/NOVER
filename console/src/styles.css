@@ -226,7 +226,7 @@
     --shadow-color: #1f282c17;
     --topbar-bg: #f6f6f3e0;
     background: #f6f6f3;
-    font-family: Inter, Segoe UI, Microsoft YaHei, sans-serif
+    font-family: "Noto Sans SC", "Noto Sans", "Source Han Sans SC", "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif
 }
 
 * {
@@ -3487,6 +3487,67 @@ p {
 
 .console-content .admin-page {
     padding-top: 34px
+}
+
+/* Open, locally available system/CJK families keep dense console copy readable
+   without adding a commercial font dependency. */
+.section-kicker,
+.eyebrow,
+.admin-nav-label {
+    font-size: 11px;
+    letter-spacing: .12em;
+}
+
+.field-note,
+.admin-nav-context span,
+.product-ownership small {
+    font-size: 13px;
+    line-height: 1.65;
+}
+
+.product-ownership {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-muted);
+    display: grid;
+    gap: 3px;
+    padding: 11px 13px;
+}
+
+.product-ownership span {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.product-ownership strong {
+    font-size: 14px;
+}
+
+.applicant-status-card {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    display: grid;
+    gap: 6px;
+    margin: 24px 0;
+    padding: 18px;
+    background: var(--surface-muted);
+}
+
+.applicant-status-card span {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 6px;
+}
+
+.applicant-status-card strong {
+    font-size: 17px;
+}
+
+.applicant-status-card small {
+    color: var(--muted);
+    font-size: 13px;
 }
 
 [data-theme=dark] .console-topbar {

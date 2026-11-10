@@ -13,6 +13,10 @@ import (
 
 type product struct {
 	ID          string         `json:"id"`
+	TenantID    string         `json:"tenant_id,omitempty"`
+	TenantName  string         `json:"tenant_name,omitempty"`
+	OwnerUserID string         `json:"owner_user_id,omitempty"`
+	OwnerName   string         `json:"owner_name,omitempty"`
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Detail      string         `json:"detail"`
@@ -47,7 +51,7 @@ func scanProducts(rows interface {
 	for rows.Next() {
 		var item product
 		var images []byte
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Detail, &item.Status, &item.AssetCount, &images); err != nil {
+		if err := rows.Scan(&item.ID, &item.TenantID, &item.TenantName, &item.OwnerUserID, &item.OwnerName, &item.Name, &item.Description, &item.Detail, &item.Status, &item.AssetCount, &images); err != nil {
 			return err
 		}
 		if err := json.Unmarshal(images, &item.Images); err != nil {
@@ -60,7 +64,7 @@ func scanProducts(rows interface {
 
 func (a *App) listProducts(w http.ResponseWriter, r *http.Request) {
 	identity, _ := operatorIdentityFromContext(r.Context())
-	rows, err := a.db.Query(r.Context(), `SELECT p.id, p.name, p.description, p.detail, p.status, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p WHERE p.tenant_id=$1 ORDER BY p.created_at DESC`, identity.TenantID)
+	rows, err := a.db.Query(r.Context(), `SELECT p.id, p.tenant_id, t.name, COALESCE(p.owner_user_id, ''), COALESCE(u.display_name, ''), p.name, p.description, p.detail, p.status, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p JOIN tenants t ON t.id=p.tenant_id LEFT JOIN operator_users u ON u.id=p.owner_user_id WHERE p.tenant_id=$1 ORDER BY p.created_at DESC`, identity.TenantID)
 	if err != nil {
 		a.logError(r, "list products failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
@@ -104,7 +108,8 @@ func (a *App) createProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The product could not be created.")
 		return
 	}
-	item := product{ID: id, Name: input.Name, Description: input.Description, Detail: input.Detail, Status: input.Status}
+	identity, _ := operatorIdentityFromContext(r.Context())
+	item := product{ID: id, TenantID: requestTenantID(r), TenantName: identity.TenantName, OwnerUserID: identity.UserID, OwnerName: identity.DisplayName, Name: input.Name, Description: input.Description, Detail: input.Detail, Status: input.Status}
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
 		a.logError(r, "begin create product failed", err)
@@ -112,7 +117,7 @@ func (a *App) createProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `INSERT INTO products (id, tenant_id, name, description, detail, status) VALUES ($1, $2, $3, $4, $5, $6)`, item.ID, requestTenantID(r), item.Name, item.Description, item.Detail, item.Status)
+	_, err = tx.Exec(r.Context(), `INSERT INTO products (id, tenant_id, owner_user_id, name, description, detail, status) VALUES ($1, $2, $3, $4, $5, $6, $7)`, item.ID, item.TenantID, item.OwnerUserID, item.Name, item.Description, item.Detail, item.Status)
 	if err == nil {
 		var eventID string
 		eventID, err = randomID()

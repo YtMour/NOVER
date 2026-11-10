@@ -31,6 +31,13 @@ func TestPermissionMatrixSeparatesTenantAndPlatformRoles(t *testing.T) {
 	}
 }
 
+func TestPendingMembershipHasNoBusinessPermissions(t *testing.T) {
+	permissions := permissionSet(operatorIdentity{Role: "OWNER", MembershipStatus: "PENDING"})
+	if len(permissions) != 0 {
+		t.Fatalf("pending membership permissions = %#v, want empty", permissions)
+	}
+}
+
 func TestAllowedOriginMatchesExplicitListOnly(t *testing.T) {
 	allowed := []string{"https://store.example.com", "https://console.example.com"}
 	if !allowedOrigin(allowed, "https://console.example.com") {

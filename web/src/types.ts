@@ -1,5 +1,9 @@
 export type Product = {
   id: string
+  tenant_id?: string
+  tenant_name?: string
+  owner_user_id?: string
+  owner_name?: string
   name: string
   description: string
   detail: string

@@ -91,7 +91,12 @@ func (a *App) uploadProductImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The image could not be uploaded.")
 		return
 	}
-	key := filepath.ToSlash(filepath.Join("product-images", id+extension))
+	key, err := tenantObjectKey(requestTenantID(r), "product-images", id+extension)
+	if err != nil {
+		a.logError(r, "create product image storage key failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "The image could not be uploaded.")
+		return
+	}
 	destination := filepath.Join(a.cfg.StorageDir, filepath.FromSlash(key))
 	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
 		a.logError(r, "create product image directory failed", err)
@@ -226,9 +231,10 @@ func (a *App) deleteProductImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The image could not be removed.")
 		return
 	}
-	if filepath.IsAbs(key) || strings.Contains(filepath.ToSlash(key), "../") {
+	storagePath, validPath := safeStoragePath(a.cfg.StorageDir, key)
+	if !validPath {
 		a.logger.Error("invalid product image storage path", "image_id", imageID)
-	} else if err := os.Remove(filepath.Join(a.cfg.StorageDir, filepath.FromSlash(key))); err != nil && !errors.Is(err, os.ErrNotExist) {
+	} else if err := os.Remove(storagePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		a.logger.Error("remove product image file failed", "image_id", imageID, "error", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -246,7 +252,7 @@ func (a *App) serveProductImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The image could not be loaded.")
 		return
 	}
-	if filepath.IsAbs(key) || strings.Contains(filepath.ToSlash(key), "../") {
+	if _, validPath := safeStoragePath(a.cfg.StorageDir, key); !validPath {
 		writeError(w, http.StatusInternalServerError, "image_path_invalid", "The image could not be loaded.")
 		return
 	}
@@ -269,11 +275,12 @@ func (a *App) serveOperatorProductImage(w http.ResponseWriter, r *http.Request) 
 }
 
 func (a *App) serveStoredProductImage(w http.ResponseWriter, r *http.Request, key, mimeType string, public bool) {
-	if filepath.IsAbs(key) || strings.Contains(filepath.ToSlash(key), "../") {
+	storagePath, validPath := safeStoragePath(a.cfg.StorageDir, key)
+	if !validPath {
 		writeError(w, http.StatusInternalServerError, "image_path_invalid", "The image could not be loaded.")
 		return
 	}
-	file, err := os.Open(filepath.Join(a.cfg.StorageDir, filepath.FromSlash(key)))
+	file, err := os.Open(storagePath)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "image_unavailable", "The image is temporarily unavailable.")
 		return

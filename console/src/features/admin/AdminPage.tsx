@@ -97,6 +97,20 @@ export function AdminPage() {
     )
   }
 
+  const readOnlyApplicant = session.data?.membership_status === 'PENDING'
+
+  if (readOnlyApplicant) {
+    const applicant = session.data!
+    return <section className="admin-lock applicant-status-view surface-panel">
+      <div className="tool-icon"><UserCheck size={19} /></div>
+      <span className="section-kicker">APPLICATION STATUS</span>
+      <h1 className="page-title">申请状态</h1>
+      <p>账号已创建，但当前仍在审核中。审核完成前只能查看账号和申请信息，商品、文件与兑换码操作暂不可用。</p>
+      <div className="applicant-status-card"><span>当前账号</span><strong>{applicant.username}</strong><small>{applicant.tenant_name}</small><span>申请状态</span><strong>{applicationStatusLabel(applicant.application_status)}</strong><small>审核通过后请重新登录以刷新权限。</small></div>
+      <button className="button button-secondary" type="button" onClick={() => void disconnect()}><LockKeyhole size={16} />退出账号</button>
+    </section>
+  }
+
   async function reloadProducts() {
     await queryClient.invalidateQueries({ queryKey: ['admin-products', adminToken] })
   }
@@ -130,7 +144,7 @@ export function AdminPage() {
         {hasPermission('member.read') && <button className={view === 'members' ? 'is-active' : ''} onClick={() => setView('members')}><ShieldCheck size={16} />成员与权限</button>}
         <span className="admin-nav-label">系统</span>
         {hasPermission('settings.read') && <button className={view === 'settings' ? 'is-active' : ''} onClick={() => setView('settings')}><Settings2 size={16} />部署设置</button>}
-        <div className="admin-nav-context"><Building2 size={15} /><div><strong>身份与 RBAC 已启用</strong><span>业务数据租户作用域待迁移</span></div></div>
+        <div className="admin-nav-context"><Building2 size={15} /><div><strong>身份与 RBAC 已启用</strong><span>商品与交付按当前空间隔离</span></div></div>
       </nav>
 
       {view === 'overview' && <AdminOverview products={products.data?.items ?? []} summary={activity.data?.summary} loading={products.isLoading || activity.isLoading} />}
@@ -216,7 +230,7 @@ function ApplicationsView({ token, canReview }: { token: string; canReview: bool
   const pending = items.filter((item) => item.status === 'PENDING' || item.status === 'REVIEWING').length
   return <section className="applications-view">
     <div className="overview-heading"><div><span className="section-kicker">ACCESS REQUESTS</span><h2>成员与租户申请</h2></div><span>{pending} 项待处理</span></div>
-    <div className="application-policy-banner"><ShieldCheck size={19} /><div><strong>资格审批与账号开通分离</strong><span>{canReview ? '通过申请仅确认准入资格；租户隔离、角色分配和邀请设密完成后才开通登录。' : '当前角色拥有申请只读权限，审核操作由平台所有者完成。'}</span></div></div>
+    <div className="application-policy-banner"><ShieldCheck size={19} /><div><strong>待审只读，通过后激活商品权限</strong><span>{canReview ? '申请会先创建隔离租户和只读账号；管理员通过后，成员关系切换为 OWNER 并开放商品、文件与兑换码操作。' : '当前角色拥有申请只读权限，审核操作由平台所有者完成。'}</span></div></div>
     {applications.isError && <StatusMessage>{applications.error.message}</StatusMessage>}
     {mutation.isError && <StatusMessage>{mutation.error.message}</StatusMessage>}
     {applications.isLoading ? <div className="empty-state">正在读取申请…</div> : items.length ? <div className="application-list">{items.map((item) => <ApplicationRow key={item.id} item={item} busy={mutation.isPending} canReview={canReview} onAction={(action) => mutation.mutate({ id: item.id, action })} />)}</div> : <div className="application-empty"><UsersRound size={24} /><strong>暂无加入申请</strong><span>公开申请提交后会显示在这里。</span></div>}
@@ -452,6 +466,7 @@ function ProductEditor({ token, product, isCreating, onSaved, onNotice, onError 
           <span className={`status-pill status-pill--${previewProduct.status.toLowerCase()}`}>{productStatusLabel(previewProduct.status)}</span>
           <span className={dirty || isCreating ? 'editor-save-state is-dirty' : 'editor-save-state'}>{dirty || isCreating ? '有未保存内容' : '内容已保存'}</span>
         </div>
+        {product && <div className="product-ownership"><span>商品归属</span><strong>{product.tenant_name || '当前空间'}</strong><small>{product.owner_name ? `负责人：${product.owner_name}` : '负责人信息待补充'}</small></div>}
         <label htmlFor="editor-product-name">商品名称</label>
         <input id="editor-product-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required placeholder="例如：NOVER Starter Kit" />
         <div className="editor-field-meta"><label htmlFor="editor-product-description">商品简介</label><span>{description.length} / 2000</span></div>
@@ -502,6 +517,10 @@ function productStatusLabel(status: Product['status']) {
 function roleLabel(role?: OperatorSession['role']) {
   if (!role) return '未分配角色'
   return { OWNER: '空间所有者', ADMIN: '管理员', EDITOR: '内容编辑', FULFILLMENT: '交付运营', ANALYST: '数据分析' }[role]
+}
+
+function applicationStatusLabel(status?: OperatorSession['application_status']) {
+  return { PENDING: '审核中', REVIEWING: '复核中', APPROVED: '已通过', REJECTED: '未通过' }[status ?? 'PENDING']
 }
 
 function platformRoleLabel(role: OperatorSession['platform_role']) {

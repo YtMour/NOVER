@@ -1,5 +1,9 @@
 export type Product = {
   id: string
+  tenant_id?: string
+  tenant_name?: string
+  owner_user_id?: string
+  owner_name?: string
   name: string
   description: string
   detail: string
@@ -44,6 +48,9 @@ export type OperatorSession = {
   tenant_id: string
   tenant_name: string
   role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'FULFILLMENT' | 'ANALYST'
+  membership_status: 'PENDING' | 'ACTIVE' | 'SUSPENDED'
+  application_id?: string
+  application_status?: 'PENDING' | 'REVIEWING' | 'APPROVED' | 'REJECTED'
   permissions: string[]
 }
 
@@ -84,6 +91,8 @@ export type DownloadTicket = { url: string; expires_at: string }
 
 export type JoinApplication = {
   id: string
+  tenant_id?: string
+  operator_user_id?: string
   organization_name: string
   contact_name: string
   email: string
