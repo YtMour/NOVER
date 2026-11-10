@@ -125,7 +125,7 @@ func (a *App) revokeOperatorSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listPublicProducts(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query(r.Context(), `SELECT p.id, ''::text, ''::text, ''::text, ''::text, p.name, p.description, p.detail, p.status, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p WHERE p.tenant_id=$1 AND p.status='ACTIVE' ORDER BY p.created_at DESC`, defaultTenantID)
+	rows, err := a.db.Query(r.Context(), `SELECT p.id, ''::text, ''::text, ''::text, ''::text, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+`, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p WHERE p.tenant_id=$1 AND p.status='ACTIVE' ORDER BY p.created_at DESC`, defaultTenantID)
 	if err != nil {
 		a.logError(r, "list public products failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")

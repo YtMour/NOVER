@@ -12,17 +12,19 @@ import (
 )
 
 type product struct {
-	ID          string         `json:"id"`
-	TenantID    string         `json:"tenant_id,omitempty"`
-	TenantName  string         `json:"tenant_name,omitempty"`
-	OwnerUserID string         `json:"owner_user_id,omitempty"`
-	OwnerName   string         `json:"owner_name,omitempty"`
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Detail      string         `json:"detail"`
-	Status      string         `json:"status"`
-	AssetCount  int64          `json:"asset_count"`
-	Images      []productImage `json:"images,omitempty"`
+	ID                      string         `json:"id"`
+	TenantID                string         `json:"tenant_id,omitempty"`
+	TenantName              string         `json:"tenant_name,omitempty"`
+	OwnerUserID             string         `json:"owner_user_id,omitempty"`
+	OwnerName               string         `json:"owner_name,omitempty"`
+	Name                    string         `json:"name"`
+	Description             string         `json:"description"`
+	Detail                  string         `json:"detail"`
+	Status                  string         `json:"status"`
+	CurrentReleaseVersion   string         `json:"current_release_version,omitempty"`
+	CurrentReleaseChangelog string         `json:"current_release_changelog,omitempty"`
+	AssetCount              int64          `json:"asset_count"`
+	Images                  []productImage `json:"images,omitempty"`
 }
 
 type productImage struct {
@@ -42,6 +44,8 @@ const productImageJSON = `COALESCE((SELECT json_agg(json_build_object(
 ) ORDER BY pi.created_at) FROM product_images pi WHERE pi.product_id=p.id AND pi.tenant_id=p.tenant_id), '[]'::json)`
 
 const productAssetCountSQL = `(SELECT COUNT(*) FROM assets a WHERE a.product_id=p.id AND a.tenant_id=p.tenant_id)`
+const productCurrentReleaseVersionSQL = `COALESCE((SELECT r.version FROM product_releases r WHERE r.product_id=p.id AND r.tenant_id=p.tenant_id AND r.status='PUBLISHED' ORDER BY r.published_at DESC NULLS LAST, r.created_at DESC LIMIT 1), '')`
+const productCurrentReleaseChangelogSQL = `COALESCE((SELECT r.changelog FROM product_releases r WHERE r.product_id=p.id AND r.tenant_id=p.tenant_id AND r.status='PUBLISHED' ORDER BY r.published_at DESC NULLS LAST, r.created_at DESC LIMIT 1), '')`
 
 func scanProducts(rows interface {
 	Next() bool
@@ -51,7 +55,7 @@ func scanProducts(rows interface {
 	for rows.Next() {
 		var item product
 		var images []byte
-		if err := rows.Scan(&item.ID, &item.TenantID, &item.TenantName, &item.OwnerUserID, &item.OwnerName, &item.Name, &item.Description, &item.Detail, &item.Status, &item.AssetCount, &images); err != nil {
+		if err := rows.Scan(&item.ID, &item.TenantID, &item.TenantName, &item.OwnerUserID, &item.OwnerName, &item.Name, &item.Description, &item.Detail, &item.Status, &item.CurrentReleaseVersion, &item.CurrentReleaseChangelog, &item.AssetCount, &images); err != nil {
 			return err
 		}
 		if err := json.Unmarshal(images, &item.Images); err != nil {
@@ -64,7 +68,7 @@ func scanProducts(rows interface {
 
 func (a *App) listProducts(w http.ResponseWriter, r *http.Request) {
 	identity, _ := operatorIdentityFromContext(r.Context())
-	rows, err := a.db.Query(r.Context(), `SELECT p.id, p.tenant_id, t.name, COALESCE(p.owner_user_id, ''), COALESCE(u.display_name, ''), p.name, p.description, p.detail, p.status, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p JOIN tenants t ON t.id=p.tenant_id LEFT JOIN operator_users u ON u.id=p.owner_user_id WHERE p.tenant_id=$1 ORDER BY p.created_at DESC`, identity.TenantID)
+	rows, err := a.db.Query(r.Context(), `SELECT p.id, p.tenant_id, t.name, COALESCE(p.owner_user_id, ''), COALESCE(u.display_name, ''), p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+`, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p JOIN tenants t ON t.id=p.tenant_id LEFT JOIN operator_users u ON u.id=p.owner_user_id WHERE p.tenant_id=$1 ORDER BY p.created_at DESC`, identity.TenantID)
 	if err != nil {
 		a.logError(r, "list products failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")

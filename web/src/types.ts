@@ -8,6 +8,8 @@ export type Product = {
   description: string
   detail: string
   status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED'
+  current_release_version?: string
+  current_release_changelog?: string
   asset_count?: number
   images?: ProductImage[]
 }

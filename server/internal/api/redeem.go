@@ -113,7 +113,7 @@ func (a *App) delivery(w http.ResponseWriter, r *http.Request) {
 		Assets        []asset   `json:"assets"`
 	}
 	result.Assets = make([]asset, 0)
-	err := a.db.QueryRow(r.Context(), `SELECT e.id, e.valid_until, p.id, p.name, p.description, p.detail, p.status FROM entitlements e JOIN products p ON p.id=e.product_id AND p.tenant_id=e.tenant_id WHERE e.access_token_hash=$1 AND e.tenant_id=$2 AND e.status='ACTIVE' AND e.valid_until>NOW()`, hashToken(token), defaultTenantID).Scan(&result.EntitlementID, &result.ValidUntil, &result.Product.ID, &result.Product.Name, &result.Product.Description, &result.Product.Detail, &result.Product.Status)
+	err := a.db.QueryRow(r.Context(), `SELECT e.id, e.valid_until, p.id, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+` FROM entitlements e JOIN products p ON p.id=e.product_id AND p.tenant_id=e.tenant_id WHERE e.access_token_hash=$1 AND e.tenant_id=$2 AND e.status='ACTIVE' AND e.valid_until>NOW()`, hashToken(token), defaultTenantID).Scan(&result.EntitlementID, &result.ValidUntil, &result.Product.ID, &result.Product.Name, &result.Product.Description, &result.Product.Detail, &result.Product.Status, &result.Product.CurrentReleaseVersion, &result.Product.CurrentReleaseChangelog)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "delivery_auth_invalid", "The delivery session is invalid or expired.")
 		return

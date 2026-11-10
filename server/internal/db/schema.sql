@@ -105,6 +105,25 @@ CREATE TABLE IF NOT EXISTS product_images (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS product_releases (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
+    product_id TEXT NOT NULL REFERENCES products(id),
+    version TEXT NOT NULL,
+    changelog TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'PUBLISHED', 'ARCHIVED')),
+    created_by TEXT REFERENCES operator_users(id),
+    published_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, product_id, version)
+);
+
+ALTER TABLE product_releases ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE product_releases ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES operator_users(id);
+CREATE INDEX IF NOT EXISTS product_releases_tenant_product_status_idx
+    ON product_releases(tenant_id, product_id, status, published_at DESC, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS redeem_codes (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
@@ -266,6 +285,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS assets_tenant_id_idx ON assets(tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS product_images_tenant_id_idx ON product_images(tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS redeem_codes_tenant_product_id_idx ON redeem_codes(tenant_id, id, product_id);
 CREATE UNIQUE INDEX IF NOT EXISTS entitlements_tenant_id_idx ON entitlements(tenant_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS product_releases_tenant_id_idx ON product_releases(tenant_id, id);
 
 DO $$
 BEGIN
@@ -278,6 +298,12 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_product_tenant_fk') THEN
         ALTER TABLE assets
             ADD CONSTRAINT assets_product_tenant_fk
+            FOREIGN KEY (tenant_id, product_id)
+            REFERENCES products(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'product_releases_product_tenant_fk') THEN
+        ALTER TABLE product_releases
+            ADD CONSTRAINT product_releases_product_tenant_fk
             FOREIGN KEY (tenant_id, product_id)
             REFERENCES products(tenant_id, id);
     END IF;
@@ -349,6 +375,7 @@ END $$;
 -- installations during the idempotent startup migration.
 ALTER TABLE products VALIDATE CONSTRAINT products_owner_tenant_fk;
 ALTER TABLE assets VALIDATE CONSTRAINT assets_product_tenant_fk;
+ALTER TABLE product_releases VALIDATE CONSTRAINT product_releases_product_tenant_fk;
 ALTER TABLE product_images VALIDATE CONSTRAINT product_images_product_tenant_fk;
 ALTER TABLE redeem_codes VALIDATE CONSTRAINT redeem_codes_product_tenant_fk;
 ALTER TABLE entitlements VALIDATE CONSTRAINT entitlements_product_tenant_fk;

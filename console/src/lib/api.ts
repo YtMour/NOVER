@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { AdminActivityResponse, Asset, Delivery, DownloadTicket, JoinApplication, OperatorLoginResponse, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductList, RedeemResponse, TenantMember } from '../types'
+import type { AdminActivityResponse, Asset, Delivery, DownloadTicket, JoinApplication, OperatorLoginResponse, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductList, ProductRelease, RedeemResponse, TenantMember } from '../types'
 import { OPERATOR_API_PATH } from './routes'
 
 export class ApiError extends Error {
@@ -184,6 +184,27 @@ export function deleteProductImage(token: string, productId: string, imageId: st
   return request<void>(operatorEndpoint(`/products/${productId}/images/${imageId}`), {
     method: 'DELETE',
     headers: withBearer(token),
+  })
+}
+
+export function loadProductReleases(token: string, productId: string) {
+  return request<{ product_id: string; items: ProductRelease[] }>(operatorEndpoint(`/products/${productId}/releases`), { headers: withBearer(token) })
+}
+
+export function createProductRelease(token: string, productId: string, version: string, changelog: string) {
+  const input = z.object({ version: z.string().trim().regex(/^v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/).max(64), changelog: z.string().trim().max(6000) }).parse({ version, changelog })
+  return request<ProductRelease>(operatorEndpoint(`/products/${productId}/releases`), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateProductReleaseStatus(token: string, productId: string, releaseId: string, status: ProductRelease['status']) {
+  return request<ProductRelease>(operatorEndpoint(`/products/${productId}/releases/${releaseId}/status`), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
   })
 }
 

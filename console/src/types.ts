@@ -8,8 +8,24 @@ export type Product = {
   description: string
   detail: string
   status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED'
+  current_release_version?: string
+  current_release_changelog?: string
   asset_count?: number
   images?: ProductImage[]
+}
+
+export type ProductRelease = {
+  id: string
+  tenant_id: string
+  product_id: string
+  version: string
+  changelog: string
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  created_by: string
+  creator_name: string
+  published_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export type ProductDraftInput = Pick<Product, 'name' | 'description' | 'detail'>

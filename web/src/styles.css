@@ -1133,6 +1133,36 @@ p {
     line-height: 1.9
 }
 
+.product-release-badge {
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: baseline;
+    gap: 4px 10px;
+    width: fit-content;
+    border: 1px solid #d8e1e4;
+    border-radius: 12px;
+    margin-top: 14px;
+    padding: 9px 12px;
+    background: #f5f8f8;
+}
+
+.product-release-badge span {
+    color: #7a858a;
+    font-size: 11px;
+}
+
+.product-release-badge strong {
+    color: #34434a;
+    font-size: 14px;
+}
+
+.product-release-badge small {
+    grid-column: 1 / -1;
+    color: #7a858a;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
 .product-detail-body {
     border-left: 2px solid #d8e1e4;
     max-width: 540px;
@@ -2403,6 +2433,20 @@ p {
 [data-theme=dark] .asset-meta,
 [data-theme=dark] .delivery-assurance {
     color: #929da0
+}
+
+[data-theme=dark] .product-release-badge {
+    border-color: var(--line);
+    background: #171e20;
+}
+
+[data-theme=dark] .product-release-badge span,
+[data-theme=dark] .product-release-badge small {
+    color: #929da0;
+}
+
+[data-theme=dark] .product-release-badge strong {
+    color: var(--ink);
 }
 
 [data-theme=dark] .product-card-foot,

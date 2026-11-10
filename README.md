@@ -71,7 +71,7 @@ ReactBits 是可复制组件参考集合，不是本项目依赖的运行时包�
 
 ## 当前状态
 
-MVP 已包含 Go API、两个独立 React 前端、PostgreSQL schema 和 Docker Compose。`web/` 只包含公开商品、兑换、交付与加入申请；`console/` 是独立的运营控制台构建，包含数据总览、商品创建、兑换码管理、成员申请、成员与权限和部署设置。两端使用不同端口、静态镜像、应用壳层、主题状态和 API 客户端。商品创建采用“内容与实时预览 → 效果图片 → 私有交付文件 → 发布检查”的连续流程，详细介绍支持 Markdown，并可在保存草稿后直接粘贴剪贴板图片。运营登录使用数据库密码哈希、服务端可撤销会话和后端权限点。公开申请会创建只读待审账号和独立租户，通过审核后激活 OWNER 商品权限；MFA、密码重置和更完整的 SaaS 隔离按 [SaaS 设计](docs/admin-saas-design.md) 分阶段实现。
+MVP 已包含 Go API、两个独立 React 前端、PostgreSQL schema 和 Docker Compose。`web/` 只包含公开商品、兑换、交付与加入申请；`console/` 是独立的运营控制台构建，包含数据总览、商品创建、兑换码管理、成员申请、成员与权限和部署设置。两端使用不同端口、静态镜像、应用壳层、主题状态和 API 客户端。商品创建采用“内容与实时预览 → 效果图片 → 私有交付文件 → 版本说明 → 发布检查”的连续流程，详细介绍支持 Markdown，并可在保存草稿后直接粘贴剪贴板图片。版本管理支持 SemVer 草稿、更新说明和发布/撤回，公开商品展示最近一次已发布版本。运营登录使用数据库密码哈希、服务端可撤销会话和后端权限点。公开申请会创建只读待审账号和独立租户，通过审核后激活 OWNER 商品权限；MFA、密码重置和更完整的 SaaS 隔离按 [SaaS 设计](docs/admin-saas-design.md) 分阶段实现。
 
 ## 本地运行
 
@@ -134,6 +134,8 @@ npm run dev
 | `PUT` | `/api/v1/cp-7f3c/products/{id}` | 保存商品名称、简介与 Markdown 详细介绍 |
 | `POST` | `/api/v1/cp-7f3c/products/{id}/status` | 发布、下架为草稿或归档商品 |
 | `GET/POST/DELETE` | `/api/v1/cp-7f3c/products/{id}/images[...]` | 鉴权预览、粘贴/上传和删除商品效果图 |
+| `GET/POST` | `/api/v1/cp-7f3c/products/{id}/releases` | 查看和创建商品版本草稿 |
+| `POST` | `/api/v1/cp-7f3c/products/{id}/releases/{releaseID}/status` | 发布、撤回或归档商品版本 |
 | `POST` | `/api/v1/cp-7f3c/products/{id}/assets` | 上传单个交付文件 |
 | `POST` | `/api/v1/cp-7f3c/products/{id}/codes` | 签发绑定当前商品的兑换码 |
 | `POST` | `/api/v1/cp-7f3c/codes/{id}/action` | 暂停、恢复或撤销兑换凭证 |

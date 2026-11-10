@@ -3550,6 +3550,85 @@ p {
     font-size: 13px;
 }
 
+.release-management-section {
+    grid-column: 1 / -1;
+}
+
+.release-manager {
+    display: grid;
+    gap: 14px;
+}
+
+.release-create-form {
+    display: grid;
+    grid-template-columns: minmax(140px, .35fr) minmax(220px, 1fr) auto;
+    align-items: end;
+    gap: 12px;
+}
+
+.release-create-form label {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.release-create-form input,
+.release-create-form textarea {
+    width: 100%;
+}
+
+.release-list {
+    display: grid;
+    gap: 8px;
+}
+
+.release-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    background: var(--surface-muted);
+}
+
+.release-row > div:first-child {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.release-row strong {
+    font-size: 14px;
+}
+
+.release-row span {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.release-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+@media (max-width: 860px) {
+    .release-create-form {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .release-row {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
 [data-theme=dark] .console-topbar {
     border-color: var(--line)
 }

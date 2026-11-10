@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent } from 'react'
-import { Archive, Ban, BarChart3, Building2, Check, Copy, Eye, FileUp, ImagePlus, KeyRound, LayoutDashboard, LockKeyhole, PackagePlus, Pause, Plus, RefreshCw, RotateCcw, Save, Send, ServerCog, Settings2, ShieldCheck, TicketCheck, Trash2, UserCheck, UsersRound, X } from 'lucide-react'
+import { Archive, Ban, BarChart3, Building2, Check, Copy, Eye, FileUp, GitBranch, ImagePlus, KeyRound, LayoutDashboard, LockKeyhole, PackagePlus, Pause, Plus, RefreshCw, RotateCcw, Save, Send, ServerCog, Settings2, ShieldCheck, TicketCheck, Trash2, UserCheck, UsersRound, X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createProduct, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductImageBlob, loadProductImages, loadProducts, loadTenantMembers, operatorLogin, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
+import { createProduct, createProductRelease, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductImageBlob, loadProductImages, loadProductReleases, loadProducts, loadTenantMembers, operatorLogin, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductReleaseStatus, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
 import { StatusMessage } from '../../components/StatusMessage'
 import { ProductDetailView } from '../redeem/ProductDetailView'
-import type { AdminActivity, AdminActivitySummary, JoinApplication, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, TenantMember } from '../../types'
+import type { AdminActivity, AdminActivitySummary, JoinApplication, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductRelease, TenantMember } from '../../types'
 
 type AdminView = 'overview' | 'products' | 'codes' | 'applications' | 'members' | 'settings'
 
@@ -191,6 +191,11 @@ export function AdminPage() {
         <section className="admin-section publish-product-section">
           <div className="admin-section-heading"><div className="tool-icon tool-icon--green"><Send size={18} /></div><div><span className="section-kicker">STEP 04 · PUBLISH</span><h2>检查并完成发布</h2></div></div>
           <ProductPublishControl token={adminToken} product={selectedProduct} onPublished={async () => { setNotice(`「${selectedProduct?.name ?? '商品'}」已发布，公开目录现在可以看到。`); setError(''); await reloadProducts() }} onError={handleError} />
+        </section>
+
+        <section className="admin-section release-management-section">
+          <div className="admin-section-heading"><div className="tool-icon tool-icon--blue"><GitBranch size={18} /></div><div><span className="section-kicker">VERSION CONTROL</span><h2>版本与更新说明</h2></div></div>
+          <ReleaseManager token={adminToken} product={selectedProduct} onNotice={(message) => { setNotice(message); setError('') }} onError={handleError} />
         </section>
 
       </div></>}
@@ -559,6 +564,40 @@ function ProductPublishControl({ token, product, onPublished, onError }: { token
       </div>
     </div>
   )
+}
+
+function ReleaseManager({ product, token, onNotice, onError }: { product?: Product; token: string; onNotice: (message: string) => void; onError: (error: Error) => void }) {
+  const queryClient = useQueryClient()
+  const [version, setVersion] = useState('1.0.0')
+  const [changelog, setChangelog] = useState('')
+  const releases = useQuery({ queryKey: ['product-releases', token, product?.id], queryFn: () => loadProductReleases(token, product!.id), enabled: Boolean(product?.id), retry: false })
+  const createMutation = useMutation({
+    mutationFn: () => createProductRelease(token, product!.id, version, changelog),
+    onSuccess: async () => { setVersion(''); setChangelog(''); await queryClient.invalidateQueries({ queryKey: ['product-releases', token, product?.id] }); onNotice('商品版本草稿已创建。') },
+    onError,
+  })
+  const statusMutation = useMutation({
+    mutationFn: ({ releaseId, status }: { releaseId: string; status: ProductRelease['status'] }) => updateProductReleaseStatus(token, product!.id, releaseId, status),
+    onSuccess: async (item) => { await queryClient.invalidateQueries({ queryKey: ['product-releases', token, product?.id] }); onNotice(item.status === 'PUBLISHED' ? `版本 ${item.version} 已发布。` : `版本 ${item.version} 已更新为${releaseStatusLabel(item.status)}。`) },
+    onError,
+  })
+
+  if (!product) return <div className="empty-state">先选择或保存商品，再管理版本。</div>
+  const items = releases.data?.items ?? []
+  return <div className="release-manager">
+    <p className="field-note">版本采用 SemVer 格式。发布版本前需要商品已发布且至少有一个交付文件；买家页只展示最近一次已发布版本。</p>
+    <form className="release-create-form" onSubmit={(event) => { event.preventDefault(); if (version.trim()) createMutation.mutate() }}>
+      <label>版本号<input value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={64} required /></label>
+      <label>更新说明<textarea value={changelog} onChange={(event) => setChangelog(event.target.value)} rows={3} maxLength={6000} placeholder="本版本新增、修复和兼容性说明" /></label>
+      <button className="button button-secondary" type="submit" disabled={createMutation.isPending}><Plus size={15} />创建版本草稿</button>
+    </form>
+    {releases.isError && <StatusMessage>{releases.error.message}</StatusMessage>}
+    {releases.isLoading ? <div className="empty-state">正在读取版本…</div> : items.length ? <div className="release-list">{items.map((item) => <article className="release-row" key={item.id}><div><strong>{item.version}</strong><span>{item.changelog || '暂无更新说明'}</span></div><div className="release-row-actions"><span className={`status-pill release-status--${item.status.toLowerCase()}`}>{releaseStatusLabel(item.status)}</span>{item.status === 'DRAFT' && <button className="text-icon-button" type="button" disabled={statusMutation.isPending || product.status !== 'ACTIVE'} title={product.status === 'ACTIVE' ? '发布版本' : '先发布商品'} onClick={() => statusMutation.mutate({ releaseId: item.id, status: 'PUBLISHED' })}><Send size={14} />发布</button>}{item.status === 'PUBLISHED' && <button className="text-icon-button" type="button" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate({ releaseId: item.id, status: 'DRAFT' })}><RotateCcw size={14} />撤回</button>}</div></article>)}</div> : <div className="empty-state">还没有版本，先创建一个版本草稿。</div>}
+  </div>
+}
+
+function releaseStatusLabel(status: ProductRelease['status']) {
+  return { DRAFT: '草稿', PUBLISHED: '已发布', ARCHIVED: '已归档' }[status]
 }
 
 function CodeIssuer({ token, productId, productName, productStatus, codes, onIssued, onError }: { token: string; productId: string; productName: string; productStatus?: Product['status']; codes: string[]; onIssued: (codes: string[]) => void; onError: (error: Error) => void }) {

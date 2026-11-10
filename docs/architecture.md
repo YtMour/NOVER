@@ -143,6 +143,10 @@ operator_sessions
 products
   id, tenant_id, owner_user_id, name, description, detail, status(DRAFT/ACTIVE/ARCHIVED), created_at
 
+product_releases
+  id, tenant_id, product_id, version, changelog, status(DRAFT/PUBLISHED/ARCHIVED),
+  created_by, published_at, created_at, updated_at
+
 product_images
   id, tenant_id, product_id, object_key, alt_text, mime_type, size_bytes, created_at
 
@@ -176,6 +180,8 @@ platform_settings
 ```
 
 `redeem_codes.product_id` 标识买家购买的商品。兑换流程将该值复制到 `entitlements.product_id`，复合外键约束 `(redeem_code_id, product_id)` 必须匹配。每批兑换码对应工作台中选中的一个商品；单个兑换码不会授予整个商品目录的访问权。
+
+商品版本以 SemVer 记录在 `product_releases` 中。版本草稿可以先维护更新说明，只有商品已发布且存在交付文件时才能发布版本；公开商品和兑换交付展示最近一次已发布版本，历史版本记录暂不改变既有商品级文件绑定。
 
 实际建表时需要加唯一约束：
 

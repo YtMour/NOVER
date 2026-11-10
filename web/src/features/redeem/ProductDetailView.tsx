@@ -25,6 +25,7 @@ export function ProductDetailView({ product, preview = false, imageURLs }: { pro
           <div className="product-detail-index">NOVER / {(product.id || 'DRAFT').slice(0, 8).toUpperCase()}</div>
           <h1 className="product-detail-title">{product.name || '未命名商品'}</h1>
           <p className="product-detail-description">{product.description || '在左侧填写简短介绍，这里会同步显示买家看到的内容。'}</p>
+          {product.current_release_version && <div className="product-release-badge"><span>当前版本</span><strong>{product.current_release_version}</strong>{product.current_release_changelog && <small>{product.current_release_changelog}</small>}</div>}
           {product.detail && <div className="product-detail-body markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: ({ src, alt, ...props }) => <img {...props} src={markdownImageSource(src)} alt={alt ?? ''} /> }}>{product.detail}</ReactMarkdown></div>}
           <div className="product-detail-meta"><span><ShieldCheck size={15} />私有交付</span><span><Download size={15} />有效期内可重复获取</span></div>
         </div>
