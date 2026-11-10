@@ -1,10 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 )
 
 func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
@@ -14,6 +17,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		AccessDays       int    `json:"access_days"`
 		MaxDownloads     int    `json:"max_downloads"`
 		ExternalOrderRef string `json:"external_order_ref"`
+		ReleaseID        string `json:"release_id"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Enter valid code batch details.")
@@ -46,6 +50,27 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 		return
 	}
+	input.ReleaseID = strings.TrimSpace(input.ReleaseID)
+	var releaseVersion string
+	if input.ReleaseID == "" {
+		err := a.db.QueryRow(r.Context(), `SELECT id, version FROM product_releases WHERE product_id=$1 AND tenant_id=$2 AND status='PUBLISHED' ORDER BY published_at DESC NULLS LAST, created_at DESC LIMIT 1`, productID, requestTenantID(r)).Scan(&input.ReleaseID, &releaseVersion)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "published_release_required", "Publish a product release before issuing redemption codes.")
+			return
+		}
+		if err != nil {
+			a.logError(r, "load current release for codes failed", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
+			return
+		}
+	} else if err := a.db.QueryRow(r.Context(), `SELECT version FROM product_releases WHERE id=$1 AND product_id=$2 AND tenant_id=$3 AND status='PUBLISHED'`, input.ReleaseID, productID, requestTenantID(r)).Scan(&releaseVersion); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusConflict, "published_release_required", "Choose a published release for this product.")
+		return
+	} else if err != nil {
+		a.logError(r, "check release for codes failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
+		return
+	}
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
 		a.logError(r, "begin code transaction failed", err)
@@ -69,7 +94,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		normalized := normalizeCode(code)
-		_, err = tx.Exec(r.Context(), `INSERT INTO redeem_codes (id, tenant_id, product_id, code_hmac, display_suffix, external_order_ref, expires_at, access_days, max_downloads) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, id, requestTenantID(r), productID, hashCode(a.cfg.RedeemHMACKey, normalized), normalized[len(normalized)-4:], cleanOrderRef(input.ExternalOrderRef), expires, input.AccessDays, input.MaxDownloads)
+		_, err = tx.Exec(r.Context(), `INSERT INTO redeem_codes (id, tenant_id, product_id, release_id, code_hmac, display_suffix, external_order_ref, expires_at, access_days, max_downloads) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, id, requestTenantID(r), productID, input.ReleaseID, hashCode(a.cfg.RedeemHMACKey, normalized), normalized[len(normalized)-4:], cleanOrderRef(input.ExternalOrderRef), expires, input.AccessDays, input.MaxDownloads)
 		if err != nil {
 			a.logError(r, "save redeem code failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
@@ -83,7 +108,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'CODES_ISSUED','product',$4,jsonb_build_object('count',$5::integer))`, eventID, requestTenantID(r), operatorActor(r), productID, input.Count); err != nil {
+	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'CODES_ISSUED','product',$4,jsonb_build_object('count',$5::integer,'release_id',$6::text))`, eventID, requestTenantID(r), operatorActor(r), productID, input.Count, input.ReleaseID); err != nil {
 		a.logError(r, "record code issuance failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
@@ -93,5 +118,5 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"codes": issued, "code_ttl_until": expires, "access_days": input.AccessDays, "max_downloads": input.MaxDownloads})
+	writeJSON(w, http.StatusCreated, map[string]any{"codes": issued, "code_ttl_until": expires, "access_days": input.AccessDays, "max_downloads": input.MaxDownloads, "release_id": input.ReleaseID, "release_version": releaseVersion})
 }

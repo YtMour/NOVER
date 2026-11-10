@@ -25,6 +25,8 @@ export type ProductImage = {
 export type Asset = {
   id: string
   product_id: string
+  release_id?: string
+  release_version?: string
   file_name: string
   mime_type: string
   size_bytes: number
@@ -34,6 +36,8 @@ export type Asset = {
 export type Delivery = {
   entitlement_id: string
   valid_until: string
+  base_release_id?: string
+  base_version?: string
   product: Product
   assets: Asset[]
 }

@@ -1930,11 +1930,18 @@ p {
 }
 
 .admin-tools-grid.product-workflow-tools {
-    grid-template-columns: repeat(2, minmax(0, 1fr))
+    grid-template-columns: minmax(0, 1fr)
 }
 
 .product-workflow-tools .admin-section {
-    min-height: 285px
+    min-height: 0
+}
+
+.version-delivery-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr);
+    align-items: start;
+    gap: 14px;
 }
 
 .publish-product-section {
@@ -3223,6 +3230,10 @@ p {
         grid-template-columns: 1fr
     }
 
+    .version-delivery-grid {
+        grid-template-columns: 1fr
+    }
+
     .publish-product-control {
         grid-template-columns: 1fr;
         gap: 18px
@@ -3551,7 +3562,7 @@ p {
 }
 
 .release-management-section {
-    grid-column: 1 / -1;
+    min-width: 0;
 }
 
 .release-manager {
@@ -3602,6 +3613,23 @@ p {
 
 .release-row strong {
     font-size: 14px;
+}
+
+.release-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.release-row .release-file-count {
+    color: #65727a;
+    background: #e9edef;
+    border-radius: 999px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 620;
+    line-height: 1.4;
 }
 
 .release-row span {

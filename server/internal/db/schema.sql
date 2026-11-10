@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS assets (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     product_id TEXT NOT NULL REFERENCES products(id),
+    release_id TEXT,
     object_key TEXT NOT NULL UNIQUE,
     file_name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
@@ -123,11 +124,13 @@ ALTER TABLE product_releases ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DE
 ALTER TABLE product_releases ADD COLUMN IF NOT EXISTS created_by TEXT REFERENCES operator_users(id);
 CREATE INDEX IF NOT EXISTS product_releases_tenant_product_status_idx
     ON product_releases(tenant_id, product_id, status, published_at DESC, created_at DESC);
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS release_id TEXT;
 
 CREATE TABLE IF NOT EXISTS redeem_codes (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     product_id TEXT NOT NULL REFERENCES products(id),
+    release_id TEXT,
     code_hmac BYTEA NOT NULL UNIQUE,
     display_suffix TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'ASSIGNED' CHECK (status IN ('ASSIGNED', 'REDEEMED', 'SUSPENDED', 'REFUNDED', 'REVOKED', 'EXPIRED')),
@@ -145,6 +148,7 @@ CREATE TABLE IF NOT EXISTS entitlements (
     tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     redeem_code_id TEXT NOT NULL UNIQUE REFERENCES redeem_codes(id),
     product_id TEXT NOT NULL REFERENCES products(id),
+    release_id TEXT,
     access_token_hash BYTEA NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED', 'REVOKED', 'EXPIRED')),
     valid_until TIMESTAMPTZ NOT NULL,
@@ -260,12 +264,15 @@ ALTER TABLE assets ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'ten
 ALTER TABLE product_images ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
 ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
 ALTER TABLE entitlements ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS release_id TEXT;
+ALTER TABLE entitlements ADD COLUMN IF NOT EXISTS release_id TEXT;
 ALTER TABLE download_tickets ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
 ALTER TABLE download_events ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
 ALTER TABLE admin_events ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
 CREATE INDEX IF NOT EXISTS products_tenant_status_created_idx ON products(tenant_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS products_tenant_owner_idx ON products(tenant_id, owner_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS assets_tenant_product_idx ON assets(tenant_id, product_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS assets_tenant_release_idx ON assets(tenant_id, release_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS product_images_tenant_product_idx ON product_images(tenant_id, product_id, created_at);
 CREATE INDEX IF NOT EXISTS redeem_codes_tenant_product_status_idx ON redeem_codes(tenant_id, product_id, status);
 CREATE INDEX IF NOT EXISTS entitlements_tenant_product_status_idx ON entitlements(tenant_id, product_id, status);
@@ -286,6 +293,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS product_images_tenant_id_idx ON product_images
 CREATE UNIQUE INDEX IF NOT EXISTS redeem_codes_tenant_product_id_idx ON redeem_codes(tenant_id, id, product_id);
 CREATE UNIQUE INDEX IF NOT EXISTS entitlements_tenant_id_idx ON entitlements(tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS product_releases_tenant_id_idx ON product_releases(tenant_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS product_releases_tenant_product_id_idx ON product_releases(tenant_id, product_id, id);
 
 DO $$
 BEGIN
@@ -307,6 +315,12 @@ BEGIN
             FOREIGN KEY (tenant_id, product_id)
             REFERENCES products(tenant_id, id);
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'assets_release_tenant_fk') THEN
+        ALTER TABLE assets
+            ADD CONSTRAINT assets_release_tenant_fk
+            FOREIGN KEY (tenant_id, product_id, release_id)
+            REFERENCES product_releases(tenant_id, product_id, id);
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'product_images_product_tenant_fk') THEN
         ALTER TABLE product_images
             ADD CONSTRAINT product_images_product_tenant_fk
@@ -319,11 +333,23 @@ BEGIN
             FOREIGN KEY (tenant_id, product_id)
             REFERENCES products(tenant_id, id);
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'redeem_codes_release_tenant_fk') THEN
+        ALTER TABLE redeem_codes
+            ADD CONSTRAINT redeem_codes_release_tenant_fk
+            FOREIGN KEY (tenant_id, product_id, release_id)
+            REFERENCES product_releases(tenant_id, product_id, id);
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entitlements_product_tenant_fk') THEN
         ALTER TABLE entitlements
             ADD CONSTRAINT entitlements_product_tenant_fk
             FOREIGN KEY (tenant_id, product_id)
             REFERENCES products(tenant_id, id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entitlements_release_tenant_fk') THEN
+        ALTER TABLE entitlements
+            ADD CONSTRAINT entitlements_release_tenant_fk
+            FOREIGN KEY (tenant_id, product_id, release_id)
+            REFERENCES product_releases(tenant_id, product_id, id);
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'entitlements_redeem_tenant_fk') THEN
         ALTER TABLE entitlements
@@ -376,9 +402,12 @@ END $$;
 ALTER TABLE products VALIDATE CONSTRAINT products_owner_tenant_fk;
 ALTER TABLE assets VALIDATE CONSTRAINT assets_product_tenant_fk;
 ALTER TABLE product_releases VALIDATE CONSTRAINT product_releases_product_tenant_fk;
+ALTER TABLE assets VALIDATE CONSTRAINT assets_release_tenant_fk;
 ALTER TABLE product_images VALIDATE CONSTRAINT product_images_product_tenant_fk;
 ALTER TABLE redeem_codes VALIDATE CONSTRAINT redeem_codes_product_tenant_fk;
+ALTER TABLE redeem_codes VALIDATE CONSTRAINT redeem_codes_release_tenant_fk;
 ALTER TABLE entitlements VALIDATE CONSTRAINT entitlements_product_tenant_fk;
+ALTER TABLE entitlements VALIDATE CONSTRAINT entitlements_release_tenant_fk;
 ALTER TABLE entitlements VALIDATE CONSTRAINT entitlements_redeem_tenant_fk;
 ALTER TABLE redeem_codes VALIDATE CONSTRAINT redeem_codes_entitlement_tenant_fk;
 ALTER TABLE download_tickets VALIDATE CONSTRAINT download_tickets_entitlement_tenant_fk;

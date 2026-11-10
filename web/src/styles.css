@@ -1490,6 +1490,77 @@ p {
     box-shadow: none
 }
 
+.delivery-version-panel {
+    border: 1px solid #dce3e5;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #f8faf9, #f1f5f5);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 14px;
+    margin: -22px 0 38px;
+    padding: 16px 18px;
+}
+
+.delivery-version-panel.has-update {
+    border-color: #d7e4db;
+    background: linear-gradient(135deg, #f6faf7, #edf5ef);
+}
+
+.delivery-version-icon {
+    color: #557080;
+    background: #e6edef;
+    border-radius: 5px;
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+}
+
+.delivery-version-panel.has-update .delivery-version-icon {
+    color: #4d755c;
+    background: #dfede3;
+}
+
+.delivery-version-copy {
+    min-width: 0;
+}
+
+.delivery-version-copy strong {
+    display: block;
+    margin-top: 3px;
+    font-size: 13px;
+}
+
+.delivery-version-copy p {
+    color: #737e83;
+    margin: 4px 0 0;
+    font-size: 10px;
+    line-height: 1.55;
+}
+
+.delivery-version-latest {
+    text-align: right;
+    display: grid;
+    gap: 2px;
+}
+
+.delivery-version-latest span,
+.delivery-version-latest small {
+    color: #7e898e;
+    font-size: 9px;
+}
+
+.delivery-version-latest strong {
+    color: #34444b;
+    font-size: 14px;
+}
+
+.delivery-version-latest small {
+    color: #4f765c;
+    font-weight: 650;
+}
+
 .content-section-heading {
     justify-content: space-between;
     align-items: end;
@@ -1519,6 +1590,43 @@ p {
 
 .asset-list {
     border-top: 1px solid #dfe2e2
+}
+
+.delivery-release-list {
+    display: grid;
+    gap: 25px;
+}
+
+.delivery-release-group {
+    min-width: 0;
+}
+
+.delivery-release-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 14px;
+    margin-bottom: 8px;
+}
+
+.delivery-release-heading span {
+    color: #8a9499;
+    font: 8px ui-monospace, SFMono-Regular, Consolas, monospace;
+    letter-spacing: .12em;
+}
+
+.delivery-release-heading h3 {
+    margin: 3px 0 0;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+.delivery-release-heading small {
+    color: #6a777e;
+    background: #edf1f2;
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 9px;
 }
 
 .asset-row {
@@ -2385,6 +2493,34 @@ p {
     border-color: var(--line)
 }
 
+[data-theme=dark] .delivery-version-panel {
+    background: linear-gradient(135deg, #171d1f, #141a1c);
+    border-color: var(--line);
+}
+
+[data-theme=dark] .delivery-version-panel.has-update {
+    background: linear-gradient(135deg, #17201b, #141c18);
+    border-color: #2e4938;
+}
+
+[data-theme=dark] .delivery-version-icon,
+[data-theme=dark] .delivery-release-heading small {
+    color: #9aa7ab;
+    background: #222b2e;
+}
+
+[data-theme=dark] .delivery-version-copy p,
+[data-theme=dark] .delivery-version-latest span,
+[data-theme=dark] .delivery-version-latest small,
+[data-theme=dark] .delivery-release-heading span {
+    color: #8e9a9d;
+}
+
+[data-theme=dark] .delivery-version-latest strong,
+[data-theme=dark] .delivery-release-heading h3 {
+    color: var(--ink);
+}
+
 [data-theme=dark] .product-card:hover {
     border-color: #465257;
     box-shadow: 0 18px 42px #0000003d
@@ -2883,6 +3019,20 @@ p {
 
     .access-state {
         margin-left: 52px
+    }
+
+    .delivery-version-panel {
+        grid-template-columns: auto minmax(0, 1fr);
+        margin-top: -15px;
+        padding: 14px;
+    }
+
+    .delivery-version-latest {
+        text-align: left;
+        grid-column: 2;
+        grid-template-columns: auto auto 1fr;
+        align-items: baseline;
+        gap: 7px;
     }
 
     .delivery-title-row {

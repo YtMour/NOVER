@@ -23,6 +23,7 @@ export type ProductRelease = {
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
   created_by: string
   creator_name: string
+  asset_count: number
   published_at: string | null
   created_at: string
   updated_at: string
@@ -41,6 +42,8 @@ export type ProductImage = {
 export type Asset = {
   id: string
   product_id: string
+  release_id?: string
+  release_version?: string
   file_name: string
   mime_type: string
   size_bytes: number

@@ -33,10 +33,10 @@ func (a *App) redeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var codeID, productID, status, tenantID string
+	var codeID, productID, releaseID, status, tenantID string
 	var expiresAt time.Time
 	var accessDays, maxDownloads int
-	err = tx.QueryRow(r.Context(), `SELECT id, tenant_id, product_id, status, expires_at, access_days, max_downloads FROM redeem_codes WHERE code_hmac=$1 AND tenant_id=$2 FOR UPDATE`, codeHash, defaultTenantID).Scan(&codeID, &tenantID, &productID, &status, &expiresAt, &accessDays, &maxDownloads)
+	err = tx.QueryRow(r.Context(), `SELECT id, tenant_id, product_id, COALESCE(release_id, ''), status, expires_at, access_days, max_downloads FROM redeem_codes WHERE code_hmac=$1 AND tenant_id=$2 FOR UPDATE`, codeHash, defaultTenantID).Scan(&codeID, &tenantID, &productID, &releaseID, &status, &expiresAt, &accessDays, &maxDownloads)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "code_not_found", "This code was not recognized. Check it and try again.")
 		return
@@ -83,7 +83,7 @@ func (a *App) redeem(w http.ResponseWriter, r *http.Request) {
 	}
 	accessToken := newAccessToken(a.cfg.AccessTokenKey, entitlementID, codeHash)
 	validUntil := time.Now().AddDate(0, 0, accessDays)
-	_, err = tx.Exec(r.Context(), `INSERT INTO entitlements (id, tenant_id, redeem_code_id, product_id, access_token_hash, valid_until, max_downloads) VALUES ($1, $2, $3, $4, $5, $6, $7)`, entitlementID, tenantID, codeID, productID, hashToken(accessToken), validUntil, maxDownloads)
+	_, err = tx.Exec(r.Context(), `INSERT INTO entitlements (id, tenant_id, redeem_code_id, product_id, release_id, access_token_hash, valid_until, max_downloads) VALUES ($1, $2, $3, $4, NULLIF($5,''), $6, $7, $8)`, entitlementID, tenantID, codeID, productID, releaseID, hashToken(accessToken), validUntil, maxDownloads)
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE redeem_codes SET status='REDEEMED', redeemed_at=NOW(), entitlement_id=$3 WHERE id=$1 AND tenant_id=$2`, codeID, tenantID, entitlementID)
 	}
@@ -109,11 +109,13 @@ func (a *App) delivery(w http.ResponseWriter, r *http.Request) {
 	var result struct {
 		EntitlementID string    `json:"entitlement_id"`
 		ValidUntil    time.Time `json:"valid_until"`
+		BaseReleaseID string    `json:"base_release_id,omitempty"`
+		BaseVersion   string    `json:"base_version,omitempty"`
 		Product       product   `json:"product"`
 		Assets        []asset   `json:"assets"`
 	}
 	result.Assets = make([]asset, 0)
-	err := a.db.QueryRow(r.Context(), `SELECT e.id, e.valid_until, p.id, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+` FROM entitlements e JOIN products p ON p.id=e.product_id AND p.tenant_id=e.tenant_id WHERE e.access_token_hash=$1 AND e.tenant_id=$2 AND e.status='ACTIVE' AND e.valid_until>NOW()`, hashToken(token), defaultTenantID).Scan(&result.EntitlementID, &result.ValidUntil, &result.Product.ID, &result.Product.Name, &result.Product.Description, &result.Product.Detail, &result.Product.Status, &result.Product.CurrentReleaseVersion, &result.Product.CurrentReleaseChangelog)
+	err := a.db.QueryRow(r.Context(), `SELECT e.id, e.valid_until, COALESCE(e.release_id, ''), COALESCE(base.version, ''), p.id, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+` FROM entitlements e JOIN products p ON p.id=e.product_id AND p.tenant_id=e.tenant_id LEFT JOIN product_releases base ON base.id=e.release_id AND base.tenant_id=e.tenant_id WHERE e.access_token_hash=$1 AND e.tenant_id=$2 AND e.status='ACTIVE' AND e.valid_until>NOW()`, hashToken(token), defaultTenantID).Scan(&result.EntitlementID, &result.ValidUntil, &result.BaseReleaseID, &result.BaseVersion, &result.Product.ID, &result.Product.Name, &result.Product.Description, &result.Product.Detail, &result.Product.Status, &result.Product.CurrentReleaseVersion, &result.Product.CurrentReleaseChangelog)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "delivery_auth_invalid", "The delivery session is invalid or expired.")
 		return
@@ -123,7 +125,14 @@ func (a *App) delivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The delivery could not be loaded.")
 		return
 	}
-	rows, err := a.db.Query(r.Context(), `SELECT id, product_id, file_name, mime_type, size_bytes, sha256 FROM assets WHERE product_id=$1 AND tenant_id=$2 ORDER BY created_at DESC`, result.Product.ID, defaultTenantID)
+	rows, err := a.db.Query(r.Context(), `
+		SELECT a.id, a.product_id, COALESCE(a.release_id, ''), COALESCE(ar.version, ''), a.file_name, a.mime_type, a.size_bytes, a.sha256
+		FROM assets a
+		LEFT JOIN product_releases ar ON ar.id=a.release_id AND ar.tenant_id=a.tenant_id
+		LEFT JOIN product_releases base ON base.id=$3 AND base.tenant_id=a.tenant_id
+		WHERE a.product_id=$1 AND a.tenant_id=$2
+		  AND (a.release_id IS NULL OR (ar.status='PUBLISHED' AND ($3='' OR ar.published_at>=base.published_at)))
+		ORDER BY ar.published_at DESC NULLS LAST, a.created_at DESC`, result.Product.ID, defaultTenantID, result.BaseReleaseID)
 	if err != nil {
 		a.logError(r, "load delivery assets failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The delivery could not be loaded.")
@@ -132,7 +141,7 @@ func (a *App) delivery(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	for rows.Next() {
 		var item asset
-		if err := rows.Scan(&item.ID, &item.ProductID, &item.FileName, &item.MIMEType, &item.SizeBytes, &item.SHA256); err != nil {
+		if err := rows.Scan(&item.ID, &item.ProductID, &item.ReleaseID, &item.ReleaseVersion, &item.FileName, &item.MIMEType, &item.SizeBytes, &item.SHA256); err != nil {
 			a.logError(r, "scan delivery asset failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "The delivery could not be loaded.")
 			return

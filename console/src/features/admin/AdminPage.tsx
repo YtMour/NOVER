@@ -183,19 +183,21 @@ export function AdminPage() {
           <ProductImageManager key={selectedId} token={adminToken} productId={selectedId} productName={selectedProduct?.name ?? ''} productStatus={selectedProduct?.status} onUpdated={async () => { setNotice('商品效果图片已更新。'); setError(''); await reloadProducts() }} onError={handleError} />
         </section>
 
-        <section className="admin-section">
-          <div className="admin-section-heading"><div className="tool-icon tool-icon--blue"><FileUp size={18} /></div><div><span className="section-kicker">STEP 03 · DELIVERY</span><h2>上传交付文件</h2></div></div>
-          <AssetUpload token={adminToken} productId={selectedId} enabled={selectedProduct?.status !== 'ARCHIVED'} onUploaded={async () => { setNotice('文件已上传并记录校验值。'); setError(''); await reloadProducts() }} onError={handleError} />
-        </section>
+        <div className="version-delivery-grid">
+          <section className="admin-section release-management-section">
+            <div className="admin-section-heading"><div className="tool-icon tool-icon--blue"><GitBranch size={18} /></div><div><span className="section-kicker">STEP 03 · VERSION</span><h2>版本与更新说明</h2></div></div>
+            <ReleaseManager token={adminToken} product={selectedProduct} onNotice={(message) => { setNotice(message); setError('') }} onError={handleError} />
+          </section>
+
+          <section className="admin-section">
+            <div className="admin-section-heading"><div className="tool-icon tool-icon--blue"><FileUp size={18} /></div><div><span className="section-kicker">STEP 04 · DELIVERY</span><h2>上传版本交付文件</h2></div></div>
+            <AssetUpload key={selectedId} token={adminToken} productId={selectedId} enabled={selectedProduct?.status !== 'ARCHIVED'} onUploaded={async () => { setNotice('文件已绑定版本并记录校验值。'); setError(''); await reloadProducts() }} onError={handleError} />
+          </section>
+        </div>
 
         <section className="admin-section publish-product-section">
-          <div className="admin-section-heading"><div className="tool-icon tool-icon--green"><Send size={18} /></div><div><span className="section-kicker">STEP 04 · PUBLISH</span><h2>检查并完成发布</h2></div></div>
-          <ProductPublishControl token={adminToken} product={selectedProduct} onPublished={async () => { setNotice(`「${selectedProduct?.name ?? '商品'}」已发布，公开目录现在可以看到。`); setError(''); await reloadProducts() }} onError={handleError} />
-        </section>
-
-        <section className="admin-section release-management-section">
-          <div className="admin-section-heading"><div className="tool-icon tool-icon--blue"><GitBranch size={18} /></div><div><span className="section-kicker">VERSION CONTROL</span><h2>版本与更新说明</h2></div></div>
-          <ReleaseManager token={adminToken} product={selectedProduct} onNotice={(message) => { setNotice(message); setError('') }} onError={handleError} />
+          <div className="admin-section-heading"><div className="tool-icon tool-icon--green"><Send size={18} /></div><div><span className="section-kicker">STEP 05 · PUBLISH</span><h2>发布商品与版本</h2></div></div>
+          <ProductPublishControl token={adminToken} product={selectedProduct} onPublished={async () => { setNotice(`「${selectedProduct?.name ?? '商品'}」已发布；现在可以发布已上传文件的版本。`); setError(''); await reloadProducts() }} onError={handleError} />
         </section>
 
       </div></>}
@@ -535,13 +537,25 @@ function platformRoleLabel(role: OperatorSession['platform_role']) {
 
 function AssetUpload({ token, productId, enabled, onUploaded, onError }: { token: string; productId: string; enabled: boolean; onUploaded: () => Promise<void> | void; onError: (error: Error) => void }) {
   const [file, setFile] = useState<File | null>(null)
-  const mutation = useMutation({ mutationFn: () => uploadAsset(token, productId, file!), onSuccess: async () => { setFile(null); await onUploaded() }, onError })
+  const [releaseId, setReleaseId] = useState('')
+  const queryClient = useQueryClient()
+  const releases = useQuery({ queryKey: ['product-releases', token, productId], queryFn: () => loadProductReleases(token, productId), enabled: Boolean(productId), retry: false })
+  const draftReleases = useMemo(() => (releases.data?.items ?? []).filter((item) => item.status === 'DRAFT'), [releases.data?.items])
+  useEffect(() => { setReleaseId(''); setFile(null) }, [productId])
+  useEffect(() => {
+    const nextReleaseId = draftReleases.some((item) => item.id === releaseId) ? releaseId : (draftReleases[0]?.id ?? '')
+    if (nextReleaseId !== releaseId) setReleaseId(nextReleaseId)
+  }, [draftReleases, releaseId])
+  const mutation = useMutation({ mutationFn: () => uploadAsset(token, productId, releaseId, file!), onSuccess: async () => { setFile(null); await queryClient.invalidateQueries({ queryKey: ['product-releases', token, productId] }); await onUploaded() }, onError })
   return (
     <form className="stack-form compact-form" onSubmit={(event) => { event.preventDefault(); if (file) mutation.mutate() }}>
+      <label htmlFor="asset-release">绑定版本</label>
+      <select id="asset-release" value={releaseId} onChange={(event) => setReleaseId(event.target.value)} disabled={!draftReleases.length || !enabled}><option value="">选择版本草稿</option>{draftReleases.map((release) => <option value={release.id} key={release.id}>{release.version} · {release.asset_count} 个文件</option>)}</select>
       <label htmlFor="asset-file">选择交付文件</label>
-      <input id="asset-file" className="file-input" type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} disabled={!productId || !enabled} />
-      <p className="field-note">草稿阶段即可上传；文件保存于私有目录并记录 SHA-256，发布前不会出现在公开页面。</p>
-      <button className="button button-secondary" type="submit" disabled={!file || !productId || !enabled || mutation.isPending}><FileUp size={16} />{mutation.isPending ? '上传中…' : '上传到当前商品'}</button>
+      <input id="asset-file" className="file-input" type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} disabled={!productId || !releaseId || !enabled} />
+      <p className="field-note">文件必须绑定版本草稿；发布版本后，该版本及后续更新将按买家权益范围展示。</p>
+      {productId && !draftReleases.length && <StatusMessage kind="info">先在版本管理中创建版本草稿，再上传交付文件。</StatusMessage>}
+      <button className="button button-secondary" type="submit" disabled={!file || !productId || !releaseId || !enabled || mutation.isPending}><FileUp size={16} />{mutation.isPending ? '上传中…' : '上传到所选版本'}</button>
     </form>
   )
 }
@@ -585,14 +599,18 @@ function ReleaseManager({ product, token, onNotice, onError }: { product?: Produ
   if (!product) return <div className="empty-state">先选择或保存商品，再管理版本。</div>
   const items = releases.data?.items ?? []
   return <div className="release-manager">
-    <p className="field-note">版本采用 SemVer 格式。发布版本前需要商品已发布且至少有一个交付文件；买家页只展示最近一次已发布版本。</p>
+    <p className="field-note">版本采用 SemVer 格式。每个版本需要先绑定交付文件，再发布；买家可访问购买起始版本及有效期内的后续更新。</p>
     <form className="release-create-form" onSubmit={(event) => { event.preventDefault(); if (version.trim()) createMutation.mutate() }}>
       <label>版本号<input value={version} onChange={(event) => setVersion(event.target.value)} placeholder="1.0.0" maxLength={64} required /></label>
       <label>更新说明<textarea value={changelog} onChange={(event) => setChangelog(event.target.value)} rows={3} maxLength={6000} placeholder="本版本新增、修复和兼容性说明" /></label>
       <button className="button button-secondary" type="submit" disabled={createMutation.isPending}><Plus size={15} />创建版本草稿</button>
     </form>
     {releases.isError && <StatusMessage>{releases.error.message}</StatusMessage>}
-    {releases.isLoading ? <div className="empty-state">正在读取版本…</div> : items.length ? <div className="release-list">{items.map((item) => <article className="release-row" key={item.id}><div><strong>{item.version}</strong><span>{item.changelog || '暂无更新说明'}</span></div><div className="release-row-actions"><span className={`status-pill release-status--${item.status.toLowerCase()}`}>{releaseStatusLabel(item.status)}</span>{item.status === 'DRAFT' && <button className="text-icon-button" type="button" disabled={statusMutation.isPending || product.status !== 'ACTIVE'} title={product.status === 'ACTIVE' ? '发布版本' : '先发布商品'} onClick={() => statusMutation.mutate({ releaseId: item.id, status: 'PUBLISHED' })}><Send size={14} />发布</button>}{item.status === 'PUBLISHED' && <button className="text-icon-button" type="button" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate({ releaseId: item.id, status: 'DRAFT' })}><RotateCcw size={14} />撤回</button>}</div></article>)}</div> : <div className="empty-state">还没有版本，先创建一个版本草稿。</div>}
+    {releases.isLoading ? <div className="empty-state">正在读取版本…</div> : items.length ? <div className="release-list">{items.map((item) => {
+      const canPublish = product.status === 'ACTIVE' && item.asset_count > 0
+      const publishTitle = product.status !== 'ACTIVE' ? '先发布商品' : item.asset_count === 0 ? '先为此版本上传交付文件' : '发布版本'
+      return <article className="release-row" key={item.id}><div><div className="release-heading"><strong>{item.version}</strong><span className="release-file-count">{item.asset_count} 个文件</span></div><span>{item.changelog || '暂无更新说明'}</span></div><div className="release-row-actions"><span className={`status-pill release-status--${item.status.toLowerCase()}`}>{releaseStatusLabel(item.status)}</span>{item.status === 'DRAFT' && <button className="text-icon-button" type="button" disabled={statusMutation.isPending || !canPublish} title={publishTitle} onClick={() => statusMutation.mutate({ releaseId: item.id, status: 'PUBLISHED' })}><Send size={14} />发布</button>}{item.status === 'PUBLISHED' && <button className="text-icon-button" type="button" disabled={statusMutation.isPending} onClick={() => statusMutation.mutate({ releaseId: item.id, status: 'DRAFT' })}><RotateCcw size={14} />撤回</button>}</div></article>
+    })}</div> : <div className="empty-state">还没有版本，先创建一个版本草稿。</div>}
   </div>
 }
 
@@ -604,8 +622,16 @@ function CodeIssuer({ token, productId, productName, productStatus, codes, onIss
   const [count, setCount] = useState(1)
   const [orderRef, setOrderRef] = useState('')
   const [copied, setCopied] = useState(false)
+  const [releaseId, setReleaseId] = useState('')
+  const releases = useQuery({ queryKey: ['product-releases', token, productId], queryFn: () => loadProductReleases(token, productId), enabled: Boolean(productId), retry: false })
+  const publishedReleases = useMemo(() => (releases.data?.items ?? []).filter((item) => item.status === 'PUBLISHED'), [releases.data?.items])
+  useEffect(() => { setReleaseId('') }, [productId])
+  useEffect(() => {
+    const nextReleaseId = publishedReleases.some((item) => item.id === releaseId) ? releaseId : (publishedReleases[0]?.id ?? '')
+    if (nextReleaseId !== releaseId) setReleaseId(nextReleaseId)
+  }, [publishedReleases, releaseId])
   const mutation = useMutation({
-    mutationFn: () => issueCodes(token, productId, { count, code_ttl_days: 90, access_days: 365, max_downloads: 25, external_order_ref: orderRef }),
+    mutationFn: () => issueCodes(token, productId, { count, code_ttl_days: 90, access_days: 365, max_downloads: 25, external_order_ref: orderRef, release_id: releaseId }),
     onSuccess: ({ codes: nextCodes }) => onIssued(nextCodes),
     onError,
   })
@@ -619,12 +645,16 @@ function CodeIssuer({ token, productId, productName, productStatus, codes, onIss
     <div className="stack-form compact-form">
       <div className="code-product-binding"><span className="section-kicker">本批兑换码绑定商品</span><strong>{productName || '请先选择商品'}</strong><span>每个兑换码只创建该商品的领取权益</span></div>
       {productId && !active && <StatusMessage kind="info">先发布当前商品，再签发可交付的兑换码。</StatusMessage>}
+      <label htmlFor="code-release">起始版本</label>
+      <select id="code-release" value={releaseId} onChange={(event) => setReleaseId(event.target.value)} disabled={!active || !publishedReleases.length}><option value="">选择已发布版本</option>{publishedReleases.map((release) => <option value={release.id} key={release.id}>{release.version} · {release.asset_count} 个文件</option>)}</select>
+      <p className="field-note">买家兑换后可访问该版本，以及有效期内后续发布的更新版本。</p>
+      {active && !publishedReleases.length && <StatusMessage kind="info">当前商品还没有已发布版本，暂不能签发兑换码。</StatusMessage>}
       <label htmlFor="order-ref">外部订单编号 <span className="optional-label">可选</span></label>
       <input id="order-ref" value={orderRef} onChange={(event) => setOrderRef(event.target.value)} maxLength={200} placeholder="用于售后对账" />
       <label htmlFor="code-count">生成数量</label>
       <div className="number-field"><button type="button" aria-label="减少数量" onClick={() => setCount((value) => Math.max(1, value - 1))}>−</button><input id="code-count" type="number" min={1} max={100} value={count} onChange={(event) => setCount(Number(event.target.value))} /><button type="button" aria-label="增加数量" onClick={() => setCount((value) => Math.min(100, value + 1))}>+</button></div>
       <div className="policy-summary"><span>兑换有效期 <strong>90 天</strong></span><span>领取后可访问 <strong>365 天</strong></span><span>下载额度 <strong>25 次</strong></span></div>
-      <button className="button button-primary" type="button" disabled={!productId || !active || mutation.isPending} onClick={() => mutation.mutate()}><KeyRound size={16} />{mutation.isPending ? '签发中…' : '签发兑换码'}</button>
+      <button className="button button-primary" type="button" disabled={!productId || !active || !releaseId || mutation.isPending} onClick={() => mutation.mutate()}><KeyRound size={16} />{mutation.isPending ? '签发中…' : '签发兑换码'}</button>
       {codes.length > 0 && <div className="issued-codes"><div className="issued-codes-heading"><span>新签发凭证</span><button className="text-icon-button" onClick={() => void copyAll()}><Copy size={14} />{copied ? '已复制' : '复制全部'}</button></div><pre>{codes.join('\n')}</pre><div className="code-warning"><Check size={14} />兑换码仅在当前后台会话显示，请及时保存。</div></div>}
     </div>
   )

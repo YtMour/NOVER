@@ -17,12 +17,14 @@ import (
 )
 
 type asset struct {
-	ID        string `json:"id"`
-	ProductID string `json:"product_id"`
-	FileName  string `json:"file_name"`
-	MIMEType  string `json:"mime_type"`
-	SizeBytes int64  `json:"size_bytes"`
-	SHA256    string `json:"sha256"`
+	ID             string `json:"id"`
+	ProductID      string `json:"product_id"`
+	ReleaseID      string `json:"release_id,omitempty"`
+	ReleaseVersion string `json:"release_version,omitempty"`
+	FileName       string `json:"file_name"`
+	MIMEType       string `json:"mime_type"`
+	SizeBytes      int64  `json:"size_bytes"`
+	SHA256         string `json:"sha256"`
 }
 
 func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +46,7 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	productID := chi.URLParam(r, "productID")
+	releaseID := strings.TrimSpace(r.FormValue("release_id"))
 	var exists bool
 	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND tenant_id=$2 AND status IN ('DRAFT', 'ACTIVE'))`, productID, requestTenantID(r)).Scan(&exists); err != nil {
 		a.logError(r, "check product failed", err)
@@ -53,6 +56,19 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	if !exists {
 		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 		return
+	}
+	var releaseVersion string
+	if releaseID != "" {
+		err := a.db.QueryRow(r.Context(), `SELECT version FROM product_releases WHERE id=$1 AND product_id=$2 AND tenant_id=$3 AND status='DRAFT'`, releaseID, productID, requestTenantID(r)).Scan(&releaseVersion)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "release_not_uploadable", "Choose a draft release for this product before uploading the file.")
+			return
+		}
+		if err != nil {
+			a.logError(r, "check release for asset upload failed", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be uploaded.")
+			return
+		}
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -130,16 +146,16 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be uploaded.")
 		return
 	}
-	item := asset{ID: id, ProductID: productID, FileName: name, MIMEType: mimeType, SizeBytes: size, SHA256: hex.EncodeToString(hash.Sum(nil))}
+	item := asset{ID: id, ProductID: productID, ReleaseID: releaseID, ReleaseVersion: releaseVersion, FileName: name, MIMEType: mimeType, SizeBytes: size, SHA256: hex.EncodeToString(hash.Sum(nil))}
 	tx, err := a.db.Begin(r.Context())
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO assets (id, tenant_id, product_id, object_key, file_name, mime_type, size_bytes, sha256) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, item.ID, requestTenantID(r), item.ProductID, key, item.FileName, item.MIMEType, item.SizeBytes, item.SHA256)
+		_, err = tx.Exec(r.Context(), `INSERT INTO assets (id, tenant_id, product_id, release_id, object_key, file_name, mime_type, size_bytes, sha256) VALUES ($1, $2, $3, NULLIF($4,''), $5, $6, $7, $8, $9)`, item.ID, requestTenantID(r), item.ProductID, item.ReleaseID, key, item.FileName, item.MIMEType, item.SizeBytes, item.SHA256)
 	}
 	if err == nil {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'ASSET_UPLOADED','asset',$4,jsonb_build_object('size_bytes',$5::bigint))`, eventID, requestTenantID(r), operatorActor(r), item.ID, item.SizeBytes)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'ASSET_UPLOADED','asset',$4,jsonb_build_object('product_id',$5::text,'release_id',NULLIF($6::text,''),'file_name',$7::text,'size_bytes',$8::bigint))`, eventID, requestTenantID(r), operatorActor(r), item.ID, item.ProductID, item.ReleaseID, item.FileName, item.SizeBytes)
 		}
 	}
 	if err == nil {
@@ -208,7 +224,13 @@ func (a *App) createDownloadTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var exists bool
-	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM assets a JOIN entitlements e ON e.id=$2 AND e.tenant_id=a.tenant_id WHERE a.id=$1 AND a.product_id=e.product_id)`, assetID, entitlementID).Scan(&exists)
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(
+		SELECT 1 FROM assets a
+		JOIN entitlements e ON e.id=$2 AND e.tenant_id=a.tenant_id AND e.product_id=a.product_id
+		LEFT JOIN product_releases base ON base.id=e.release_id AND base.tenant_id=e.tenant_id
+		LEFT JOIN product_releases ar ON ar.id=a.release_id AND ar.tenant_id=a.tenant_id
+		WHERE a.id=$1 AND (a.release_id IS NULL OR (ar.status='PUBLISHED' AND (e.release_id IS NULL OR ar.published_at>=base.published_at)))
+	)`, assetID, entitlementID).Scan(&exists)
 	if err != nil {
 		a.logError(r, "check asset entitlement failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "A download link could not be created.")

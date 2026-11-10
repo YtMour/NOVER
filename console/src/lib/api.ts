@@ -146,9 +146,10 @@ export function updateProductStatus(token: string, productId: string, status: Pr
   })
 }
 
-export function uploadAsset(token: string, productId: string, file: File) {
+export function uploadAsset(token: string, productId: string, releaseId: string, file: File) {
   const body = new FormData()
   body.append('file', file)
+  body.append('release_id', releaseId)
   return request<Asset>(operatorEndpoint(`/products/${productId}/assets`), {
     method: 'POST',
     headers: withBearer(token),
@@ -211,7 +212,7 @@ export function updateProductReleaseStatus(token: string, productId: string, rel
 export function issueCodes(
   token: string,
   productId: string,
-  options: { count: number; code_ttl_days: number; access_days: number; max_downloads: number; external_order_ref: string },
+  options: { count: number; code_ttl_days: number; access_days: number; max_downloads: number; external_order_ref: string; release_id: string },
 ) {
   const input = z.object({
     count: z.number().int().min(1).max(100),
@@ -219,6 +220,7 @@ export function issueCodes(
     access_days: z.number().int().min(1).max(3650),
     max_downloads: z.number().int().min(1).max(10_000),
     external_order_ref: z.string().max(200),
+    release_id: z.string().min(1),
   }).parse(options)
   return request<{ codes: string[]; code_ttl_until: string; access_days: number; max_downloads: number }>(
     operatorEndpoint(`/products/${productId}/codes`),

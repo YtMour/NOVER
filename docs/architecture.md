@@ -121,7 +121,7 @@ server/
     clock/              可测试时间源
 ```
 
-当前实现尚未拆成上述模块，也没有 Redis cache 接口；本地私有存储使用 `STORAGE_DIR` 配置，MVP 限流保存在进程内。商品支持草稿、实时买家页预览、内容编辑、发布、下架和归档；版本模型尚未实现。
+当前实现尚未拆成上述模块，也没有 Redis cache 接口；本地私有存储使用 `STORAGE_DIR` 配置，MVP 限流保存在进程内。商品支持草稿、实时买家页预览、内容编辑、发布、下架和归档；版本草稿、版本文件绑定、版本发布和更新权益已实现。
 
 ## 5. 当前数据库模型
 
@@ -151,14 +151,14 @@ product_images
   id, tenant_id, product_id, object_key, alt_text, mime_type, size_bytes, created_at
 
 assets
-  id, tenant_id, product_id, object_key, file_name, mime_type, size_bytes, sha256, created_at
+  id, tenant_id, product_id, release_id, object_key, file_name, mime_type, size_bytes, sha256, created_at
 
 redeem_codes
-  id, tenant_id, product_id, code_hmac, display_suffix, status, external_order_ref,
+  id, tenant_id, product_id, release_id, code_hmac, display_suffix, status, external_order_ref,
   expires_at, access_days, max_downloads, redeemed_at, entitlement_id
 
 entitlements
-  id, tenant_id, redeem_code_id, product_id, access_token_hash, status, valid_until,
+  id, tenant_id, redeem_code_id, product_id, release_id, access_token_hash, status, valid_until,
   max_downloads, downloads_issued, created_at
 
 download_tickets
@@ -179,9 +179,9 @@ platform_settings
   operator_web_path, operator_api_path, updated_at
 ```
 
-`redeem_codes.product_id` 标识买家购买的商品。兑换流程将该值复制到 `entitlements.product_id`，复合外键约束 `(redeem_code_id, product_id)` 必须匹配。每批兑换码对应工作台中选中的一个商品；单个兑换码不会授予整个商品目录的访问权。
+`redeem_codes.product_id` 标识买家购买的商品，`redeem_codes.release_id` 标识签发时选择的已发布起始版本。兑换流程将两者复制到权益；租户/商品/版本复合外键阻止跨租户、跨商品或跨版本错配。每批兑换码只对应工作台中选中的一个商品和一个起始版本。
 
-商品版本以 SemVer 记录在 `product_releases` 中。版本草稿可以先维护更新说明，只有商品已发布且存在交付文件时才能发布版本；公开商品和兑换交付展示最近一次已发布版本，历史版本记录暂不改变既有商品级文件绑定。
+商品版本以 SemVer 记录在 `product_releases` 中。交付文件通过 `assets.release_id` 绑定版本草稿；只有商品已发布且该版本至少有一个文件时才能发布。交付查询返回通用文件，以及权益基础版本发布时点之后的已发布版本文件。已被兑换码引用的发布版本不能撤回，避免既有权益失去基线。
 
 实际建表时需要加唯一约束：
 
@@ -214,9 +214,10 @@ platform_settings
 → 写入 product-images 私有卷路径 → 草稿阶段由鉴权预览路由读取
 → 商品发布后公开图片路由按商品与图片 ID 读取
 
-管理员上传单个交付文件 → 服务端限制请求体和文件大小
+管理员选择版本草稿并上传单个交付文件 → 服务端校验租户、商品与版本归属
+→ 版本必须处于 DRAFT → 限制请求体和文件大小
 → 写临时文件 → 计算 SHA-256 → 写入 private-assets 卷
-→ 保存文件元数据
+→ 保存文件元数据与 release_id
 ```
 
 MVP 上传不执行病毒扫描、归档解包检查或内容审查。
@@ -225,6 +226,7 @@ MVP 上传不执行病毒扫描、归档解包检查或内容审查。
 
 ```text
 买家请求下载 → 事务锁定权益并检查有效期/额度
+→ 校验文件为通用文件或权益起始版本之后的已发布版本
 → 创建 5 分钟票据并计入额度 → 记录下载开始事件
 → 从 private-assets 卷发送文件
 ```
@@ -267,8 +269,8 @@ MVP 使用 `private-assets` Docker 卷，适合单实例功能验证。后续可
 | 批量兑换码签发和兑换 | 已实现 |
 | 可恢复的交付访问凭证 | 已实现 |
 | 限额和短时下载票据 | 已实现 |
-| 商品版本和更新权限 | 待实现 |
-| 管理员账号、TOTP/Passkey | 待实现 |
+| 商品版本、版本文件与更新权限 | 已实现；发布版本必须有文件，基础版本被签发后不可撤回 |
+| 数据库运营账号与可撤销会话 | 已实现；TOTP/Passkey、密码重置待实现 |
 | S3 对象存储和文件扫描 | 待实现 |
 | 凭证暂停、恢复、撤销及活动记录 | 已实现 |
 | 退款联动、审计检索和备份恢复 | 待实现 |

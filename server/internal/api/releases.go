@@ -22,6 +22,7 @@ type productRelease struct {
 	Status      string     `json:"status"`
 	CreatedBy   string     `json:"created_by"`
 	CreatorName string     `json:"creator_name"`
+	AssetCount  int        `json:"asset_count"`
 	PublishedAt *time.Time `json:"published_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
@@ -46,7 +47,9 @@ func (a *App) listProductReleases(w http.ResponseWriter, r *http.Request) {
 	productID := chi.URLParam(r, "productID")
 	rows, err := a.db.Query(r.Context(), `
 		SELECT r.id, r.tenant_id, r.product_id, r.version, r.changelog, r.status,
-		       COALESCE(r.created_by, ''), COALESCE(u.display_name, ''), r.published_at, r.created_at, r.updated_at
+		       COALESCE(r.created_by, ''), COALESCE(u.display_name, ''),
+		       (SELECT COUNT(*) FROM assets a WHERE a.tenant_id=r.tenant_id AND a.product_id=r.product_id AND a.release_id=r.id),
+		       r.published_at, r.created_at, r.updated_at
 		FROM product_releases r
 		LEFT JOIN operator_users u ON u.id=r.created_by
 		WHERE r.tenant_id=$1 AND r.product_id=$2
@@ -60,7 +63,7 @@ func (a *App) listProductReleases(w http.ResponseWriter, r *http.Request) {
 	items := make([]productRelease, 0)
 	for rows.Next() {
 		var item productRelease
-		if err := rows.Scan(&item.ID, &item.TenantID, &item.ProductID, &item.Version, &item.Changelog, &item.Status, &item.CreatedBy, &item.CreatorName, &item.PublishedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.TenantID, &item.ProductID, &item.Version, &item.Changelog, &item.Status, &item.CreatedBy, &item.CreatorName, &item.AssetCount, &item.PublishedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			a.logError(r, "scan product release failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "Product releases could not be loaded.")
 			return
@@ -118,9 +121,9 @@ func (a *App) createProductRelease(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(r.Context(), `
 		INSERT INTO product_releases (id, tenant_id, product_id, version, changelog, created_by)
 		VALUES ($1,$2,$3,$4,$5,$6)
-		RETURNING id, tenant_id, product_id, version, changelog, status, COALESCE(created_by, ''), $7::text, published_at, created_at, updated_at`,
+		RETURNING id, tenant_id, product_id, version, changelog, status, COALESCE(created_by, ''), $7::text, 0, published_at, created_at, updated_at`,
 		id, identity.TenantID, productID, input.Version, input.Changelog, identity.UserID, identity.DisplayName).
-		Scan(&item.ID, &item.TenantID, &item.ProductID, &item.Version, &item.Changelog, &item.Status, &item.CreatedBy, &item.CreatorName, &item.PublishedAt, &item.CreatedAt, &item.UpdatedAt)
+		Scan(&item.ID, &item.TenantID, &item.ProductID, &item.Version, &item.Changelog, &item.Status, &item.CreatedBy, &item.CreatorName, &item.AssetCount, &item.PublishedAt, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "product_releases_tenant_id_product_id_version_key") {
 			writeError(w, http.StatusConflict, "release_exists", "This version already exists for the product.")
@@ -172,10 +175,12 @@ func (a *App) updateProductReleaseStatus(w http.ResponseWriter, r *http.Request)
 	var item productRelease
 	err = tx.QueryRow(r.Context(), `
 		SELECT r.id, r.tenant_id, r.product_id, r.version, r.changelog, r.status,
-		       COALESCE(r.created_by, ''), COALESCE(u.display_name, ''), r.published_at, r.created_at, r.updated_at
+		       COALESCE(r.created_by, ''), COALESCE(u.display_name, ''),
+		       (SELECT COUNT(*) FROM assets a WHERE a.tenant_id=r.tenant_id AND a.product_id=r.product_id AND a.release_id=r.id),
+		       r.published_at, r.created_at, r.updated_at
 		FROM product_releases r LEFT JOIN operator_users u ON u.id=r.created_by
-		WHERE r.id=$1 AND r.product_id=$2 AND r.tenant_id=$3 FOR UPDATE`, releaseID, productID, identity.TenantID).
-		Scan(&item.ID, &item.TenantID, &item.ProductID, &item.Version, &item.Changelog, &item.Status, &item.CreatedBy, &item.CreatorName, &item.PublishedAt, &item.CreatedAt, &item.UpdatedAt)
+		WHERE r.id=$1 AND r.product_id=$2 AND r.tenant_id=$3 FOR UPDATE OF r`, releaseID, productID, identity.TenantID).
+		Scan(&item.ID, &item.TenantID, &item.ProductID, &item.Version, &item.Changelog, &item.Status, &item.CreatedBy, &item.CreatorName, &item.AssetCount, &item.PublishedAt, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "release_not_found", "Product release was not found.")
 		return
@@ -188,14 +193,27 @@ func (a *App) updateProductReleaseStatus(w http.ResponseWriter, r *http.Request)
 	if input.Status == "PUBLISHED" {
 		var assetCount int
 		var productStatus string
-		err = tx.QueryRow(r.Context(), `SELECT p.status, COUNT(a.id) FROM products p LEFT JOIN assets a ON a.product_id=p.id AND a.tenant_id=p.tenant_id WHERE p.id=$1 AND p.tenant_id=$2 GROUP BY p.id, p.status`, productID, identity.TenantID).Scan(&productStatus, &assetCount)
+		err = tx.QueryRow(r.Context(), `SELECT p.status, COUNT(a.id) FROM products p LEFT JOIN assets a ON a.product_id=p.id AND a.tenant_id=p.tenant_id AND a.release_id=$3 WHERE p.id=$1 AND p.tenant_id=$2 GROUP BY p.id, p.status`, productID, identity.TenantID, releaseID).Scan(&productStatus, &assetCount)
 		if err != nil {
 			a.logError(r, "check release assets failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "The product release could not be published.")
 			return
 		}
 		if productStatus != "ACTIVE" || assetCount == 0 {
-			writeError(w, http.StatusConflict, "release_delivery_required", "Publish the product and upload at least one delivery file before publishing a release.")
+			writeError(w, http.StatusConflict, "release_delivery_required", "Publish the product and upload at least one file assigned to this release before publishing it.")
+			return
+		}
+	}
+	if item.Status == "PUBLISHED" && input.Status != "PUBLISHED" {
+		var references int
+		err = tx.QueryRow(r.Context(), `SELECT COUNT(*) FROM redeem_codes WHERE tenant_id=$1 AND product_id=$2 AND release_id=$3`, identity.TenantID, productID, releaseID).Scan(&references)
+		if err != nil {
+			a.logError(r, "check sold release references failed", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "The product release could not be updated.")
+			return
+		}
+		if references > 0 {
+			writeError(w, http.StatusConflict, "release_in_use", "This release is bound to issued redemption codes and must remain published.")
 			return
 		}
 	}
