@@ -39,16 +39,18 @@ type activitySummary struct {
 }
 
 func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
+	identity, _ := operatorIdentityFromContext(r.Context())
 	rows, err := a.db.Query(r.Context(), `
 		SELECT rc.id, p.id, p.name, rc.display_suffix, rc.status, rc.external_order_ref,
 		       rc.expires_at, rc.redeemed_at, e.valid_until,
 		       COALESCE(e.downloads_issued, 0),
-	       COALESCE((SELECT COUNT(*) FROM download_events de WHERE de.entitlement_id=e.id), 0)
+	       COALESCE((SELECT COUNT(*) FROM download_events de WHERE de.entitlement_id=e.id AND de.tenant_id=e.tenant_id), 0)
 	FROM redeem_codes rc
-	JOIN products p ON p.id=rc.product_id
-	LEFT JOIN entitlements e ON e.id=rc.entitlement_id
+	JOIN products p ON p.id=rc.product_id AND p.tenant_id=rc.tenant_id
+	LEFT JOIN entitlements e ON e.id=rc.entitlement_id AND e.tenant_id=rc.tenant_id
+	WHERE rc.tenant_id=$1
 	ORDER BY rc.created_at DESC
-	LIMIT 100`)
+	LIMIT 100`, identity.TenantID)
 	if err != nil {
 		a.logError(r, "list admin activity failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Activity could not be loaded.")
@@ -75,10 +77,11 @@ func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
 		SELECT rc.product_id,
 		       COUNT(*),
 		       COUNT(*) FILTER (WHERE rc.status='REDEEMED'),
-		       COALESCE(SUM((SELECT COUNT(*) FROM download_events de WHERE de.entitlement_id=e.id)), 0)
+	       COALESCE(SUM((SELECT COUNT(*) FROM download_events de WHERE de.entitlement_id=e.id AND de.tenant_id=e.tenant_id)), 0)
 		FROM redeem_codes rc
-		LEFT JOIN entitlements e ON e.id=rc.entitlement_id
-		GROUP BY rc.product_id`)
+		LEFT JOIN entitlements e ON e.id=rc.entitlement_id AND e.tenant_id=rc.tenant_id
+		WHERE rc.tenant_id=$1
+		GROUP BY rc.product_id`, identity.TenantID)
 	if err != nil {
 		a.logError(r, "load activity summary failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Activity summary could not be loaded.")
@@ -126,9 +129,9 @@ func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var status string
+	var status, tenantID string
 	var entitlementID *string
-	err = tx.QueryRow(r.Context(), `SELECT status, entitlement_id FROM redeem_codes WHERE id=$1 FOR UPDATE`, chi.URLParam(r, "codeID")).Scan(&status, &entitlementID)
+	err = tx.QueryRow(r.Context(), `SELECT status, tenant_id, entitlement_id FROM redeem_codes WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, chi.URLParam(r, "codeID"), requestTenantID(r)).Scan(&status, &tenantID, &entitlementID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "code_not_found", "The code was not found.")
 		return
@@ -168,7 +171,7 @@ func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 		nextEntitlementStatus = "REVOKED"
 	}
 	if input.Action == "RESUME" && entitlementID != nil {
-		tag, err := tx.Exec(r.Context(), `UPDATE entitlements SET status='ACTIVE' WHERE id=$1 AND status='SUSPENDED' AND valid_until>NOW()`, *entitlementID)
+		tag, err := tx.Exec(r.Context(), `UPDATE entitlements SET status='ACTIVE' WHERE id=$1 AND tenant_id=$2 AND status='SUSPENDED' AND valid_until>NOW()`, *entitlementID, tenantID)
 		if err != nil {
 			a.logError(r, "resume entitlement failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
@@ -179,13 +182,13 @@ func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if entitlementID != nil {
-		if _, err := tx.Exec(r.Context(), `UPDATE entitlements SET status=$2 WHERE id=$1 AND status IN ('ACTIVE', 'SUSPENDED')`, *entitlementID, nextEntitlementStatus); err != nil {
+		if _, err := tx.Exec(r.Context(), `UPDATE entitlements SET status=$3 WHERE id=$1 AND tenant_id=$2 AND status IN ('ACTIVE', 'SUSPENDED')`, *entitlementID, tenantID, nextEntitlementStatus); err != nil {
 			a.logError(r, "update entitlement status failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 			return
 		}
 	}
-	if _, err := tx.Exec(r.Context(), `UPDATE redeem_codes SET status=$2 WHERE id=$1`, chi.URLParam(r, "codeID"), nextCodeStatus); err != nil {
+	if _, err := tx.Exec(r.Context(), `UPDATE redeem_codes SET status=$3 WHERE id=$1 AND tenant_id=$2`, chi.URLParam(r, "codeID"), tenantID, nextCodeStatus); err != nil {
 		a.logError(r, "update code status failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 		return
@@ -196,7 +199,7 @@ func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'redeem_code',$4,jsonb_build_object('status',$5::text))`, eventID, operatorActor(r), input.Action, chi.URLParam(r, "codeID"), nextCodeStatus); err != nil {
+	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,$4,'redeem_code',$5,jsonb_build_object('status',$6::text))`, eventID, tenantID, operatorActor(r), input.Action, chi.URLParam(r, "codeID"), nextCodeStatus); err != nil {
 		a.logError(r, "record code action failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 		return

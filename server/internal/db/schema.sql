@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS operator_sessions_user_active_idx
 
 CREATE TABLE IF NOT EXISTS products (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     detail TEXT NOT NULL DEFAULT '',
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 ALTER TABLE products ADD COLUMN IF NOT EXISTS detail TEXT NOT NULL DEFAULT '';
+ALTER TABLE products ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
 
 -- The MVP originally created ACTIVE/ARCHIVED only. Keep startup migration
 -- idempotent while extending existing deployments with the draft workflow.
@@ -75,6 +77,7 @@ ALTER TABLE products
 
 CREATE TABLE IF NOT EXISTS assets (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     product_id TEXT NOT NULL REFERENCES products(id),
     object_key TEXT NOT NULL UNIQUE,
     file_name TEXT NOT NULL,
@@ -86,6 +89,7 @@ CREATE TABLE IF NOT EXISTS assets (
 
 CREATE TABLE IF NOT EXISTS product_images (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     product_id TEXT NOT NULL REFERENCES products(id),
     object_key TEXT NOT NULL UNIQUE,
     alt_text TEXT NOT NULL DEFAULT '',
@@ -96,6 +100,7 @@ CREATE TABLE IF NOT EXISTS product_images (
 
 CREATE TABLE IF NOT EXISTS redeem_codes (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     product_id TEXT NOT NULL REFERENCES products(id),
     code_hmac BYTEA NOT NULL UNIQUE,
     display_suffix TEXT NOT NULL,
@@ -111,6 +116,7 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
 
 CREATE TABLE IF NOT EXISTS entitlements (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     redeem_code_id TEXT NOT NULL UNIQUE REFERENCES redeem_codes(id),
     product_id TEXT NOT NULL REFERENCES products(id),
     access_token_hash BYTEA NOT NULL UNIQUE,
@@ -148,6 +154,7 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS download_tickets (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     entitlement_id TEXT NOT NULL REFERENCES entitlements(id),
     asset_id TEXT NOT NULL REFERENCES assets(id),
     token_hash BYTEA NOT NULL UNIQUE,
@@ -157,6 +164,7 @@ CREATE TABLE IF NOT EXISTS download_tickets (
 
 CREATE TABLE IF NOT EXISTS download_events (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     entitlement_id TEXT NOT NULL REFERENCES entitlements(id),
     asset_id TEXT NOT NULL REFERENCES assets(id),
     result TEXT NOT NULL,
@@ -165,6 +173,7 @@ CREATE TABLE IF NOT EXISTS download_events (
 
 CREATE TABLE IF NOT EXISTS admin_events (
     id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id),
     actor TEXT NOT NULL DEFAULT 'token-admin',
     action TEXT NOT NULL,
     resource_type TEXT NOT NULL,
@@ -214,6 +223,21 @@ WHERE id='default' AND deployment_mode='SPLIT_ORIGIN'
   AND storefront_url='http://localhost:45173' AND console_url='http://localhost:45173';
 
 CREATE INDEX IF NOT EXISTS redeem_codes_product_status_idx ON redeem_codes(product_id, status);
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE product_images ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE entitlements ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE download_tickets ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE download_events ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+ALTER TABLE admin_events ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'tenant-default' REFERENCES tenants(id);
+CREATE INDEX IF NOT EXISTS products_tenant_status_created_idx ON products(tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS assets_tenant_product_idx ON assets(tenant_id, product_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS product_images_tenant_product_idx ON product_images(tenant_id, product_id, created_at);
+CREATE INDEX IF NOT EXISTS redeem_codes_tenant_product_status_idx ON redeem_codes(tenant_id, product_id, status);
+CREATE INDEX IF NOT EXISTS entitlements_tenant_product_status_idx ON entitlements(tenant_id, product_id, status);
+CREATE INDEX IF NOT EXISTS download_tickets_tenant_expiry_idx ON download_tickets(tenant_id, expires_at);
+CREATE INDEX IF NOT EXISTS download_events_tenant_created_idx ON download_events(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS admin_events_tenant_resource_idx ON admin_events(tenant_id, resource_type, resource_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS product_images_product_created_idx ON product_images(product_id, created_at);
 CREATE INDEX IF NOT EXISTS entitlements_product_status_idx ON entitlements(product_id, status);
 CREATE INDEX IF NOT EXISTS download_tickets_expiry_idx ON download_tickets(expires_at);

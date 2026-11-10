@@ -29,7 +29,7 @@ Browser
 
 ### 部署与租户模型
 
-当前 NOVER 是**单租户、自托管应用**：一次 Docker Compose 部署对应一个运营主体、一套品牌和一套商品数据。数据库账号、租户成员关系、平台/租户角色、后端权限点和可撤销会话已实现；业务表仍没有 `tenant_id`，所以现在不是多租户 SaaS。公开加入申请和资格审核已实现，但资格通过不会直接生成可登录账号。邀请、MFA 和强租户隔离的完整迁移见 [运营控制台与 SaaS 设计](admin-saas-design.md)。
+当前 NOVER 是**单租户、自托管应用**：一次 Docker Compose 部署对应一个运营主体、一套品牌和一套商品数据。数据库账号、租户成员关系、平台/租户角色、后端权限点和可撤销会话已实现；核心业务表已完成 `tenant_id` 默认租户回填和 API 查询作用域，但复合外键、RLS、邀请设密和 MFA 尚未完成，所以现在仍不是可直接开放多商户入驻的平台。公开加入申请和资格审核已实现，但资格通过不会直接生成可登录账号。完整迁移见 [运营控制台与 SaaS 设计](admin-saas-design.md)。
 
 如果后续提供平台托管版，需要先完成以下改造，而不是只增加一个“商户”表：
 
@@ -141,30 +141,30 @@ operator_sessions
   revoked_at, created_at, last_seen_at
 
 products
-  id, name, description, detail, status(DRAFT/ACTIVE/ARCHIVED), created_at
+  id, tenant_id, name, description, detail, status(DRAFT/ACTIVE/ARCHIVED), created_at
 
 product_images
-  id, product_id, object_key, alt_text, mime_type, size_bytes, created_at
+  id, tenant_id, product_id, object_key, alt_text, mime_type, size_bytes, created_at
 
 assets
-  id, product_id, object_key, file_name, mime_type, size_bytes, sha256, created_at
+  id, tenant_id, product_id, object_key, file_name, mime_type, size_bytes, sha256, created_at
 
 redeem_codes
-  id, product_id, code_hmac, display_suffix, status, external_order_ref,
+  id, tenant_id, product_id, code_hmac, display_suffix, status, external_order_ref,
   expires_at, access_days, max_downloads, redeemed_at, entitlement_id
 
 entitlements
-  id, redeem_code_id, product_id, access_token_hash, status, valid_until,
+  id, tenant_id, redeem_code_id, product_id, access_token_hash, status, valid_until,
   max_downloads, downloads_issued, created_at
 
 download_tickets
-  id, entitlement_id, asset_id, token_hash, expires_at, created_at
+  id, tenant_id, entitlement_id, asset_id, token_hash, expires_at, created_at
 
 download_events
-  id, entitlement_id, asset_id, result, created_at
+  id, tenant_id, entitlement_id, asset_id, result, created_at
 
 admin_events
-  id, actor, action, resource_type, resource_id, metadata_json, created_at
+  id, tenant_id, actor, action, resource_type, resource_id, metadata_json, created_at
 
 join_applications
   id, organization_name, contact_name, email, desired_username, use_case,
@@ -230,7 +230,7 @@ MVP 使用 `private-assets` Docker 卷保存文件，应用数据库只记录对
 - MVP 运营工作台使用 bcrypt 数据库密码换取 8 小时 HMAC 会话；服务端逐请求确认账号、成员关系、租户、角色和撤销状态。开发首次启动引导 `admin/admin`，生产版本拒绝默认凭证并需接入正式 MFA。
 - 管理后台与公开兑换 API 使用不同权限中间件。
 - 兑换码只保存 HMAC/哈希；密钥从环境变量或密钥管理系统注入。
-- MVP 记录商品创建、文件上传、兑换码签发、凭证状态变更和下载开始事件；退款联动与审计检索仍待实现。
+- MVP 记录商品创建、文件上传、兑换码签发、凭证状态变更和下载开始事件；业务审计事件已绑定当前租户，退款联动与审计检索仍待实现。
 - 兑换、票据签发和上传有进程内按 IP 限流；重启会清空计数，多实例需要共享限流方案。
 - 下载事件当前不记录 IP 或 User-Agent。
 - Compose 卷持久化数据；备份与恢复流程仍待实现。

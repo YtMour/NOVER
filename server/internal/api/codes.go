@@ -37,7 +37,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 	}
 	productID := chi.URLParam(r, "productID")
 	var productExists bool
-	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND status='ACTIVE')`, productID).Scan(&productExists); err != nil {
+	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND tenant_id=$2 AND status='ACTIVE')`, productID, requestTenantID(r)).Scan(&productExists); err != nil {
 		a.logError(r, "check product for codes failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
@@ -69,7 +69,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		normalized := normalizeCode(code)
-		_, err = tx.Exec(r.Context(), `INSERT INTO redeem_codes (id, product_id, code_hmac, display_suffix, external_order_ref, expires_at, access_days, max_downloads) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, id, productID, hashCode(a.cfg.RedeemHMACKey, normalized), normalized[len(normalized)-4:], cleanOrderRef(input.ExternalOrderRef), expires, input.AccessDays, input.MaxDownloads)
+		_, err = tx.Exec(r.Context(), `INSERT INTO redeem_codes (id, tenant_id, product_id, code_hmac, display_suffix, external_order_ref, expires_at, access_days, max_downloads) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, id, requestTenantID(r), productID, hashCode(a.cfg.RedeemHMACKey, normalized), normalized[len(normalized)-4:], cleanOrderRef(input.ExternalOrderRef), expires, input.AccessDays, input.MaxDownloads)
 		if err != nil {
 			a.logError(r, "save redeem code failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
@@ -83,7 +83,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'CODES_ISSUED','product',$3,jsonb_build_object('count',$4::integer))`, eventID, operatorActor(r), productID, input.Count); err != nil {
+	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'CODES_ISSUED','product',$4,jsonb_build_object('count',$5::integer))`, eventID, requestTenantID(r), operatorActor(r), productID, input.Count); err != nil {
 		a.logError(r, "record code issuance failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return

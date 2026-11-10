@@ -35,9 +35,9 @@ const productImageJSON = `COALESCE((SELECT json_agg(json_build_object(
 	'alt_text', pi.alt_text,
 	'mime_type', pi.mime_type,
 	'size_bytes', pi.size_bytes
-) ORDER BY pi.created_at) FROM product_images pi WHERE pi.product_id=p.id), '[]'::json)`
+) ORDER BY pi.created_at) FROM product_images pi WHERE pi.product_id=p.id AND pi.tenant_id=p.tenant_id), '[]'::json)`
 
-const productAssetCountSQL = `(SELECT COUNT(*) FROM assets a WHERE a.product_id=p.id)`
+const productAssetCountSQL = `(SELECT COUNT(*) FROM assets a WHERE a.product_id=p.id AND a.tenant_id=p.tenant_id)`
 
 func scanProducts(rows interface {
 	Next() bool
@@ -59,7 +59,8 @@ func scanProducts(rows interface {
 }
 
 func (a *App) listProducts(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query(r.Context(), `SELECT p.id, p.name, p.description, p.detail, p.status, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p ORDER BY p.created_at DESC`)
+	identity, _ := operatorIdentityFromContext(r.Context())
+	rows, err := a.db.Query(r.Context(), `SELECT p.id, p.name, p.description, p.detail, p.status, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p WHERE p.tenant_id=$1 ORDER BY p.created_at DESC`, identity.TenantID)
 	if err != nil {
 		a.logError(r, "list products failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
@@ -111,13 +112,13 @@ func (a *App) createProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `INSERT INTO products (id, name, description, detail, status) VALUES ($1, $2, $3, $4, $5)`, item.ID, item.Name, item.Description, item.Detail, item.Status)
+	_, err = tx.Exec(r.Context(), `INSERT INTO products (id, tenant_id, name, description, detail, status) VALUES ($1, $2, $3, $4, $5, $6)`, item.ID, requestTenantID(r), item.Name, item.Description, item.Detail, item.Status)
 	if err == nil {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
 			action := "PRODUCT_DRAFT_CREATED"
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'product',$4,jsonb_build_object('status',$5::text))`, eventID, operatorActor(r), action, item.ID, item.Status)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,$4,'product',$5,jsonb_build_object('status',$6::text))`, eventID, requestTenantID(r), operatorActor(r), action, item.ID, item.Status)
 		}
 	}
 	if err == nil {
@@ -168,7 +169,7 @@ func (a *App) updateProduct(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 
 	item := product{ID: productID(r), Name: input.Name, Description: input.Description, Detail: input.Detail}
-	err = tx.QueryRow(r.Context(), `UPDATE products SET name=$2, description=$3, detail=$4 WHERE id=$1 RETURNING status`, item.ID, item.Name, item.Description, item.Detail).Scan(&item.Status)
+	err = tx.QueryRow(r.Context(), `UPDATE products SET name=$3, description=$4, detail=$5 WHERE id=$1 AND tenant_id=$2 RETURNING status`, item.ID, requestTenantID(r), item.Name, item.Description, item.Detail).Scan(&item.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 		return
@@ -177,7 +178,7 @@ func (a *App) updateProduct(w http.ResponseWriter, r *http.Request) {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'PRODUCT_CONTENT_UPDATED','product',$3,jsonb_build_object('status',$4::text))`, eventID, operatorActor(r), item.ID, item.Status)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'PRODUCT_CONTENT_UPDATED','product',$4,jsonb_build_object('status',$5::text))`, eventID, requestTenantID(r), operatorActor(r), item.ID, item.Status)
 		}
 	}
 	if err == nil {
@@ -215,7 +216,7 @@ func (a *App) updateProductStatus(w http.ResponseWriter, r *http.Request) {
 
 	item := product{ID: productID(r)}
 	if input.Status == "ACTIVE" {
-		err = tx.QueryRow(r.Context(), `SELECT COUNT(a.id) FROM products p LEFT JOIN assets a ON a.product_id=p.id WHERE p.id=$1 GROUP BY p.id`, item.ID).Scan(&item.AssetCount)
+		err = tx.QueryRow(r.Context(), `SELECT COUNT(a.id) FROM products p LEFT JOIN assets a ON a.product_id=p.id AND a.tenant_id=p.tenant_id WHERE p.id=$1 AND p.tenant_id=$2 GROUP BY p.id`, item.ID, requestTenantID(r)).Scan(&item.AssetCount)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 			return
@@ -230,7 +231,7 @@ func (a *App) updateProductStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err = tx.QueryRow(r.Context(), `UPDATE products SET status=$2 WHERE id=$1 RETURNING name, description, detail, status`, item.ID, input.Status).Scan(&item.Name, &item.Description, &item.Detail, &item.Status)
+	err = tx.QueryRow(r.Context(), `UPDATE products SET status=$3 WHERE id=$1 AND tenant_id=$2 RETURNING name, description, detail, status`, item.ID, requestTenantID(r), input.Status).Scan(&item.Name, &item.Description, &item.Detail, &item.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 		return
@@ -240,7 +241,7 @@ func (a *App) updateProductStatus(w http.ResponseWriter, r *http.Request) {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'product',$4,jsonb_build_object('status',$5::text))`, eventID, operatorActor(r), action, item.ID, item.Status)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,$4,'product',$5,jsonb_build_object('status',$6::text))`, eventID, requestTenantID(r), operatorActor(r), action, item.ID, item.Status)
 		}
 	}
 	if err == nil {

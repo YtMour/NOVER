@@ -49,7 +49,7 @@ func (a *App) uploadProductImage(w http.ResponseWriter, r *http.Request) {
 	}
 	productID := chi.URLParam(r, "productID")
 	var productName string
-	if err := a.db.QueryRow(r.Context(), `SELECT name FROM products WHERE id=$1 AND status IN ('DRAFT', 'ACTIVE')`, productID).Scan(&productName); errors.Is(err, pgx.ErrNoRows) {
+	if err := a.db.QueryRow(r.Context(), `SELECT name FROM products WHERE id=$1 AND tenant_id=$2 AND status IN ('DRAFT', 'ACTIVE')`, productID, requestTenantID(r)).Scan(&productName); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 		return
 	} else if err != nil {
@@ -131,13 +131,13 @@ func (a *App) uploadProductImage(w http.ResponseWriter, r *http.Request) {
 	item := productImage{ID: id, URL: "/api/v1/products/" + productID + "/images/" + id, AltText: altText, MIMEType: mimeType, SizeBytes: int64(len(data))}
 	tx, err := a.db.Begin(r.Context())
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO product_images (id, product_id, object_key, alt_text, mime_type, size_bytes) VALUES ($1, $2, $3, $4, $5, $6)`, item.ID, productID, key, item.AltText, item.MIMEType, item.SizeBytes)
+		_, err = tx.Exec(r.Context(), `INSERT INTO product_images (id, tenant_id, product_id, object_key, alt_text, mime_type, size_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7)`, item.ID, requestTenantID(r), productID, key, item.AltText, item.MIMEType, item.SizeBytes)
 	}
 	if err == nil {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'PRODUCT_IMAGE_UPLOADED','product_image',$3,jsonb_build_object('product_id',$4::text,'size_bytes',$5::bigint))`, eventID, operatorActor(r), item.ID, productID, item.SizeBytes)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'PRODUCT_IMAGE_UPLOADED','product_image',$4,jsonb_build_object('product_id',$5::text,'size_bytes',$6::bigint))`, eventID, requestTenantID(r), operatorActor(r), item.ID, productID, item.SizeBytes)
 		}
 	}
 	if err == nil {
@@ -157,7 +157,7 @@ func (a *App) uploadProductImage(w http.ResponseWriter, r *http.Request) {
 func (a *App) listProductImages(w http.ResponseWriter, r *http.Request) {
 	productID := chi.URLParam(r, "productID")
 	var exists bool
-	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1)`, productID).Scan(&exists); err != nil {
+	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND tenant_id=$2)`, productID, requestTenantID(r)).Scan(&exists); err != nil {
 		a.logError(r, "check product for images failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Images could not be loaded.")
 		return
@@ -166,7 +166,7 @@ func (a *App) listProductImages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 		return
 	}
-	rows, err := a.db.Query(r.Context(), `SELECT id, alt_text, mime_type, size_bytes FROM product_images WHERE product_id=$1 ORDER BY created_at`, productID)
+	rows, err := a.db.Query(r.Context(), `SELECT id, alt_text, mime_type, size_bytes FROM product_images WHERE product_id=$1 AND tenant_id=$2 ORDER BY created_at`, productID, requestTenantID(r))
 	if err != nil {
 		a.logError(r, "list product images failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Images could not be loaded.")
@@ -202,7 +202,7 @@ func (a *App) deleteProductImage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var key string
-	err = tx.QueryRow(r.Context(), `DELETE FROM product_images WHERE id=$1 AND product_id=$2 RETURNING object_key`, imageID, productID).Scan(&key)
+	err = tx.QueryRow(r.Context(), `DELETE FROM product_images WHERE id=$1 AND product_id=$2 AND tenant_id=$3 RETURNING object_key`, imageID, productID, requestTenantID(r)).Scan(&key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "image_not_found", "Image was not found for this product.")
 		return
@@ -214,7 +214,7 @@ func (a *App) deleteProductImage(w http.ResponseWriter, r *http.Request) {
 	}
 	eventID, err := randomID()
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'PRODUCT_IMAGE_DELETED','product_image',$3,jsonb_build_object('product_id',$4::text))`, eventID, operatorActor(r), imageID, productID)
+		_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'PRODUCT_IMAGE_DELETED','product_image',$4,jsonb_build_object('product_id',$5::text))`, eventID, requestTenantID(r), operatorActor(r), imageID, productID)
 	}
 	if err != nil {
 		a.logError(r, "audit product image delete failed", err)
@@ -236,7 +236,7 @@ func (a *App) deleteProductImage(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) serveProductImage(w http.ResponseWriter, r *http.Request) {
 	var key, mimeType string
-	err := a.db.QueryRow(r.Context(), `SELECT pi.object_key, pi.mime_type FROM product_images pi JOIN products p ON p.id=pi.product_id WHERE pi.id=$1 AND pi.product_id=$2 AND p.status='ACTIVE'`, chi.URLParam(r, "imageID"), chi.URLParam(r, "productID")).Scan(&key, &mimeType)
+	err := a.db.QueryRow(r.Context(), `SELECT pi.object_key, pi.mime_type FROM product_images pi JOIN products p ON p.id=pi.product_id AND p.tenant_id=pi.tenant_id WHERE pi.id=$1 AND pi.product_id=$2 AND pi.tenant_id=$3 AND p.status='ACTIVE'`, chi.URLParam(r, "imageID"), chi.URLParam(r, "productID"), defaultTenantID).Scan(&key, &mimeType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "image_not_found", "Image was not found.")
 		return
@@ -255,7 +255,7 @@ func (a *App) serveProductImage(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) serveOperatorProductImage(w http.ResponseWriter, r *http.Request) {
 	var key, mimeType string
-	err := a.db.QueryRow(r.Context(), `SELECT object_key, mime_type FROM product_images WHERE id=$1 AND product_id=$2`, chi.URLParam(r, "imageID"), chi.URLParam(r, "productID")).Scan(&key, &mimeType)
+	err := a.db.QueryRow(r.Context(), `SELECT object_key, mime_type FROM product_images WHERE id=$1 AND product_id=$2 AND tenant_id=$3`, chi.URLParam(r, "imageID"), chi.URLParam(r, "productID"), requestTenantID(r)).Scan(&key, &mimeType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "image_not_found", "Image was not found.")
 		return

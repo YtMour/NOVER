@@ -45,7 +45,7 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	productID := chi.URLParam(r, "productID")
 	var exists bool
-	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND status IN ('DRAFT', 'ACTIVE'))`, productID).Scan(&exists); err != nil {
+	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND tenant_id=$2 AND status IN ('DRAFT', 'ACTIVE'))`, productID, requestTenantID(r)).Scan(&exists); err != nil {
 		a.logError(r, "check product failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be uploaded.")
 		return
@@ -128,13 +128,13 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	item := asset{ID: id, ProductID: productID, FileName: name, MIMEType: mimeType, SizeBytes: size, SHA256: hex.EncodeToString(hash.Sum(nil))}
 	tx, err := a.db.Begin(r.Context())
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO assets (id, product_id, object_key, file_name, mime_type, size_bytes, sha256) VALUES ($1, $2, $3, $4, $5, $6, $7)`, item.ID, item.ProductID, key, item.FileName, item.MIMEType, item.SizeBytes, item.SHA256)
+		_, err = tx.Exec(r.Context(), `INSERT INTO assets (id, tenant_id, product_id, object_key, file_name, mime_type, size_bytes, sha256) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, item.ID, requestTenantID(r), item.ProductID, key, item.FileName, item.MIMEType, item.SizeBytes, item.SHA256)
 	}
 	if err == nil {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'ASSET_UPLOADED','asset',$3,jsonb_build_object('size_bytes',$4::bigint))`, eventID, operatorActor(r), item.ID, item.SizeBytes)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'ASSET_UPLOADED','asset',$4,jsonb_build_object('size_bytes',$5::bigint))`, eventID, requestTenantID(r), operatorActor(r), item.ID, item.SizeBytes)
 		}
 	}
 	if err == nil {
@@ -181,10 +181,10 @@ func (a *App) createDownloadTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var entitlementID string
+	var entitlementID, tenantID string
 	var maxDownloads, downloadsIssued int
 	var validUntil time.Time
-	err = tx.QueryRow(r.Context(), `SELECT id, max_downloads, downloads_issued, valid_until FROM entitlements WHERE access_token_hash=$1 AND status='ACTIVE' FOR UPDATE`, hashToken(token)).Scan(&entitlementID, &maxDownloads, &downloadsIssued, &validUntil)
+	err = tx.QueryRow(r.Context(), `SELECT id, tenant_id, max_downloads, downloads_issued, valid_until FROM entitlements WHERE access_token_hash=$1 AND status='ACTIVE' FOR UPDATE`, hashToken(token)).Scan(&entitlementID, &tenantID, &maxDownloads, &downloadsIssued, &validUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "delivery_auth_invalid", "The delivery session is invalid or expired.")
 		return
@@ -203,7 +203,7 @@ func (a *App) createDownloadTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var exists bool
-	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM assets WHERE id=$1 AND product_id=(SELECT product_id FROM entitlements WHERE id=$2))`, assetID, entitlementID).Scan(&exists)
+	err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM assets a JOIN entitlements e ON e.id=$2 AND e.tenant_id=a.tenant_id WHERE a.id=$1 AND a.product_id=e.product_id)`, assetID, entitlementID).Scan(&exists)
 	if err != nil {
 		a.logError(r, "check asset entitlement failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "A download link could not be created.")
@@ -214,9 +214,9 @@ func (a *App) createDownloadTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := time.Now().Add(time.Duration(a.cfg.DownloadTTLSeconds) * time.Second)
-	_, err = tx.Exec(r.Context(), `INSERT INTO download_tickets (id, entitlement_id, asset_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`, ticketID, entitlementID, assetID, hashToken(ticket), expires)
+	_, err = tx.Exec(r.Context(), `INSERT INTO download_tickets (id, tenant_id, entitlement_id, asset_id, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`, ticketID, tenantID, entitlementID, assetID, hashToken(ticket), expires)
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE entitlements SET downloads_issued=downloads_issued+1 WHERE id=$1`, entitlementID)
+		_, err = tx.Exec(r.Context(), `UPDATE entitlements SET downloads_issued=downloads_issued+1 WHERE id=$1 AND tenant_id=$2`, entitlementID, tenantID)
 	}
 	if err != nil {
 		a.logError(r, "save download ticket failed", err)
@@ -234,9 +234,9 @@ func (a *App) createDownloadTicket(w http.ResponseWriter, r *http.Request) {
 func (a *App) download(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
 	var item asset
-	var entitlementID, objectKey string
+	var entitlementID, objectKey, tenantID string
 	var expires time.Time
-	err := a.db.QueryRow(r.Context(), `SELECT a.id, a.product_id, a.file_name, a.mime_type, a.size_bytes, a.sha256, a.object_key, e.id, t.expires_at FROM download_tickets t JOIN assets a ON a.id=t.asset_id JOIN entitlements e ON e.id=t.entitlement_id WHERE t.token_hash=$1 AND e.status='ACTIVE' AND e.valid_until>NOW()`, hashToken(token)).Scan(&item.ID, &item.ProductID, &item.FileName, &item.MIMEType, &item.SizeBytes, &item.SHA256, &objectKey, &entitlementID, &expires)
+	err := a.db.QueryRow(r.Context(), `SELECT a.id, a.product_id, a.file_name, a.mime_type, a.size_bytes, a.sha256, a.object_key, e.id, t.tenant_id, t.expires_at FROM download_tickets t JOIN assets a ON a.id=t.asset_id AND a.tenant_id=t.tenant_id JOIN entitlements e ON e.id=t.entitlement_id AND e.tenant_id=t.tenant_id WHERE t.token_hash=$1 AND e.status='ACTIVE' AND e.valid_until>NOW()`, hashToken(token)).Scan(&item.ID, &item.ProductID, &item.FileName, &item.MIMEType, &item.SizeBytes, &item.SHA256, &objectKey, &entitlementID, &tenantID, &expires)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !expires.After(time.Now())) {
 		writeError(w, http.StatusGone, "download_link_expired", "This download link has expired. Request a new link from your delivery page.")
 		return
@@ -271,7 +271,7 @@ func (a *App) download(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be downloaded.")
 		return
 	}
-	if _, err := a.db.Exec(r.Context(), `INSERT INTO download_events (id, entitlement_id, asset_id, result) VALUES ($1, $2, $3, 'STARTED')`, eventID, entitlementID, item.ID); err != nil {
+	if _, err := a.db.Exec(r.Context(), `INSERT INTO download_events (id, tenant_id, entitlement_id, asset_id, result) VALUES ($1, $2, $3, $4, 'STARTED')`, eventID, tenantID, entitlementID, item.ID); err != nil {
 		a.logError(r, "record download event failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be downloaded.")
 		return
