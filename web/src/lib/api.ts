@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import type { AdminActivity, Asset, Delivery, DownloadTicket, OperatorLoginResponse, Product, ProductList, RedeemResponse } from '../types'
+import type { AdminActivity, Asset, Delivery, DownloadTicket, JoinApplication, OperatorLoginResponse, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductList, RedeemResponse } from '../types'
+import { OPERATOR_API_PATH } from './routes'
 
 export class ApiError extends Error {
   constructor(
@@ -12,6 +13,14 @@ export class ApiError extends Error {
   }
 }
 
+function apiURL(path: string) {
+  const configured = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
+  if (configured) return `${configured}${path}`
+  if (typeof window === 'undefined') return path
+  const port = import.meta.env.VITE_API_PORT || '48080'
+  return `${window.location.protocol}//${window.location.hostname}:${port}${path}`
+}
+
 export async function loadServiceHealth() {
   return request<{ status: 'ready' }>('/readyz')
 }
@@ -22,15 +31,34 @@ export function loadPublicProducts() {
 
 export function operatorLogin(username: string, password: string) {
   const input = z.object({ username: z.string().trim().min(1).max(100), password: z.string().min(1).max(200) }).parse({ username, password })
-  return request<OperatorLoginResponse>('/api/v1/ops/login', {
+  return request<OperatorLoginResponse>(`/api/v1/${OPERATOR_API_PATH}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
 }
 
+export function submitJoinApplication(input: { organization_name: string; contact_name: string; email: string; desired_username: string; use_case: string }) {
+  const payload = z.object({
+    organization_name: z.string().trim().min(2).max(120),
+    contact_name: z.string().trim().min(2).max(80),
+    email: z.string().trim().email().max(254),
+    desired_username: z.string().trim().toLowerCase().regex(/^[a-z][a-z0-9_-]{3,31}$/),
+    use_case: z.string().trim().min(10).max(1200),
+  }).parse(input)
+  return request<{ id: string; status: JoinApplication['status']; created_at: string }>('/api/v1/join-applications', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+function operatorEndpoint(path: string) {
+  return `/api/v1/${OPERATOR_API_PATH}${path}`
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init)
+  const response = await fetch(apiURL(path), init)
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
     throw new ApiError(
@@ -65,37 +93,85 @@ export function loadDelivery(token: string) {
 }
 
 export function loadProducts(token: string) {
-  return request<ProductList>('/api/v1/ops/products', { headers: withBearer(token) })
+  return request<ProductList>(operatorEndpoint('/products'), { headers: withBearer(token) })
 }
 
 export function loadActivity(token: string) {
-  return request<{ items: AdminActivity[] }>('/api/v1/ops/activity', { headers: withBearer(token) })
+  return request<{ items: AdminActivity[] }>(operatorEndpoint('/activity'), { headers: withBearer(token) })
 }
 
 export function updateCodeAction(token: string, codeId: string, action: 'SUSPEND' | 'RESUME' | 'REVOKE') {
-  return request<{ status: string }>(`/api/v1/ops/codes/${codeId}/action`, {
+  return request<{ status: string }>(operatorEndpoint(`/codes/${codeId}/action`), {
     method: 'POST',
     headers: { ...withBearer(token), 'Content-Type': 'application/json' },
     body: JSON.stringify({ action }),
   })
 }
 
-export function createProduct(token: string, name: string, description: string) {
-  const input = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(2000) }).parse({ name, description })
-  return request<Product>('/api/v1/ops/products', {
+export function createProduct(token: string, name: string, description: string, detail: string, status: 'DRAFT' | 'ACTIVE' = 'DRAFT') {
+  const input = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(2000), detail: z.string().trim().max(6000), status: z.enum(['DRAFT', 'ACTIVE']) }).parse({ name, description, detail, status })
+  return request<Product>(operatorEndpoint('/products'), {
     method: 'POST',
     headers: { ...withBearer(token), 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   })
 }
 
+export function updateProduct(token: string, productId: string, draft: ProductDraftInput) {
+  const input = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(2000), detail: z.string().trim().max(6000) }).parse(draft)
+  return request<Product>(operatorEndpoint(`/products/${productId}`), {
+    method: 'PUT',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateProductStatus(token: string, productId: string, status: Product['status']) {
+  return request<Product>(operatorEndpoint(`/products/${productId}/status`), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+}
+
 export function uploadAsset(token: string, productId: string, file: File) {
   const body = new FormData()
   body.append('file', file)
-  return request<Asset>(`/api/v1/ops/products/${productId}/assets`, {
+  return request<Asset>(operatorEndpoint(`/products/${productId}/assets`), {
     method: 'POST',
     headers: withBearer(token),
     body,
+  })
+}
+
+export function loadProductImages(token: string, productId: string) {
+  return request<{ items: ProductImage[] }>(operatorEndpoint(`/products/${productId}/images`), { headers: withBearer(token) })
+}
+
+export async function loadProductImageBlob(token: string, productId: string, imageId: string) {
+  const response = await fetch(apiURL(operatorEndpoint(`/products/${productId}/images/${imageId}`)), { headers: withBearer(token) })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new ApiError(payload.message ?? '图片暂时没有读取成功。', payload.code ?? 'image_load_failed', response.status)
+  }
+  return response.blob()
+}
+
+export function uploadProductImage(token: string, productId: string, file: File, altText: string) {
+  const body = new FormData()
+  body.append('file', file)
+  body.append('alt_text', altText)
+  return request<ProductImage>(operatorEndpoint(`/products/${productId}/images`), {
+    method: 'POST',
+    headers: withBearer(token),
+    body,
+  })
+}
+
+export function deleteProductImage(token: string, productId: string, imageId: string) {
+  return request<void>(operatorEndpoint(`/products/${productId}/images/${imageId}`), {
+    method: 'DELETE',
+    headers: withBearer(token),
   })
 }
 
@@ -112,13 +188,37 @@ export function issueCodes(
     external_order_ref: z.string().max(200),
   }).parse(options)
   return request<{ codes: string[]; code_ttl_until: string; access_days: number; max_downloads: number }>(
-    `/api/v1/ops/products/${productId}/codes`,
+    operatorEndpoint(`/products/${productId}/codes`),
     {
       method: 'POST',
       headers: { ...withBearer(token), 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     },
   )
+}
+
+export function loadJoinApplications(token: string) {
+  return request<{ items: JoinApplication[] }>(operatorEndpoint('/applications'), { headers: withBearer(token) })
+}
+
+export function reviewJoinApplication(token: string, applicationId: string, action: 'REVIEW' | 'APPROVE' | 'REJECT') {
+  return request<JoinApplication>(operatorEndpoint(`/applications/${applicationId}/review`), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  })
+}
+
+export function loadPlatformSettings(token: string) {
+  return request<PlatformSettings>(operatorEndpoint('/settings'), { headers: withBearer(token) })
+}
+
+export function savePlatformSettings(token: string, settings: Omit<PlatformSettings, 'updated_at'>) {
+  return request<PlatformSettings>(operatorEndpoint('/settings'), {
+    method: 'PUT',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
 }
 
 export function createDownloadTicket(token: string, assetId: string) {

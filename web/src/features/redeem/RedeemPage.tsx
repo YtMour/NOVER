@@ -1,8 +1,9 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { ArrowDown, ArrowRight, ArrowUpRight, Box, Download, KeyRound, Layers3, ShieldCheck, ShoppingBag, Sparkles } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUpRight, Download, KeyRound, ShieldCheck, ShoppingBag } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { loadPublicProducts, redeemCode } from '../../lib/api'
+import { getProductVisual } from '../../lib/productVisuals'
 import { StatusMessage } from '../../components/StatusMessage'
 
 export function RedeemPage() {
@@ -35,23 +36,17 @@ export function RedeemPage() {
           </div>
           <div className="hero-assurance"><ShieldCheck size={17} /><span>一次购买，获得清晰、可追踪的数字交付。</span></div>
         </div>
-        <div className="hero-island" aria-label="NOVER 数字空间视觉标记">
-          <div className="hero-grid-lines" />
-          <div className="island-card island-card--back"><span>01</span><strong>IDEAS</strong></div>
-          <div className="island-card island-card--middle"><span>02</span><strong>TOOLS</strong></div>
-          <div className="island-card island-card--front"><Sparkles size={18} /><span>数字资源</span><strong>NOVER</strong></div>
-          <div className="hero-caption">A SPACE FOR<br />DIGITAL DISCOVERY.</div>
-        </div>
+        <div className="hero-product-strip" aria-label="NOVER 服务摘要"><span><strong>03</strong> 精选产品</span><span><strong>1:1</strong> 商品凭证</span><span><strong>24/7</strong> 自助领取</span></div>
       </section>
 
       <section id="catalog" className="catalog-section">
         <div className="section-heading-row">
           <div><div className="eyebrow"><span className="eyebrow-line" /> SELECTED COLLECTION</div><h2>正在交付的产品</h2></div>
-          <span className="section-side-note">精选数字工具与创作资源</span>
+          <span className="section-side-note">{String(products.data?.items.length ?? 0).padStart(2, '0')} PRODUCTS · 精选数字工具与创作资源</span>
         </div>
         {products.isError ? <StatusMessage kind="info">产品目录暂时无法加载，兑换入口仍可正常使用。</StatusMessage> : products.isLoading ? <div className="catalog-loading">正在整理产品目录…</div> : products.data?.items.length ? (
           <div className="product-grid">
-            {products.data.items.map((product, index) => <ProductCard key={product.id} name={product.name} description={product.description} index={index} />)}
+            {products.data.items.map((product, index) => <ProductCard key={product.id} product={product} index={index} />)}
           </div>
         ) : <div className="catalog-empty">当前没有公开商品，稍后再来看看。</div>}
       </section>
@@ -91,9 +86,13 @@ export function RedeemPage() {
   )
 }
 
-function ProductCard({ name, description, index }: { name: string; description: string; index: number }) {
-  const Icon = index % 3 === 0 ? Box : index % 3 === 1 ? Layers3 : Sparkles
-  return <a href="#redeem" className={`product-card product-card--${index % 3}`}><div className="product-card-top"><span className="product-index">0{index + 1}</span><div className="product-card-icon"><Icon size={17} /></div></div><h3>{name}</h3><p>{description || '数字产品交付资源。'}</p><div className="product-card-foot"><span>输入兑换码领取</span><ArrowUpRight size={15} /></div></a>
+function ProductCard({ product, index }: { product: { id: string; name: string; description: string; images?: { url: string; alt_text: string }[] }; index: number }) {
+  const cover = product.images?.[0]
+  const fallback = getProductVisual(product.id, index)
+  return <Link to={`/products/${product.id}`} className={`product-card product-card--${index % 3}`}>
+    <div className="product-card-cover"><img src={cover?.url ?? fallback.src} alt={cover?.alt_text || fallback.alt} loading={index === 0 ? 'eager' : 'lazy'} /><span>数字产品</span></div>
+    <div className="product-card-copy"><div className="product-card-top"><span className="product-index">0{index + 1}</span><ArrowUpRight size={16} /></div><h3>{product.name}</h3><p>{product.description || '数字产品交付资源。'}</p><div className="product-card-foot"><span>查看商品详情</span><span>NOVER / {product.id.slice(0, 6).toUpperCase()}</span></div></div>
+  </Link>
 }
 
 function FlowStep({ index, icon, title, copy }: { index: string; icon: ReactNode; title: string; copy: string }) {

@@ -26,6 +26,21 @@ Browser
                     └── S3 兼容私有对象存储（后续）
 ```
 
+### 部署与租户模型
+
+当前 NOVER 是**单租户、自托管应用**：一次 Docker Compose 部署对应一个运营主体、一套品牌、一组运营账号和一套商品数据。它采用常见的 SaaS 技术基础，但现在不是多租户 SaaS，业务表也没有 `tenant_id`。公开加入申请和资格审核已实现，但资格通过不会直接生成可登录账号。账号邀请、RBAC 和强租户隔离的完整迁移见 [运营控制台与 SaaS 设计](admin-saas-design.md)。
+
+如果后续提供平台托管版，需要先完成以下改造，而不是只增加一个“商户”表：
+
+- 所有商品、图片、资产、兑换码、权益、下载和审计记录加入不可为空的 `tenant_id`；
+- 所有查询、唯一键、事务和对象存储路径强制租户作用域，并增加越权测试；
+- 增加租户、成员、邀请、角色和细粒度 RBAC，区分平台管理员与租户运营者；
+- 增加套餐、配额、计量、账单、停服与数据导出规则；
+- 增加租户域名、品牌、邮件和存储命名空间；
+- 增加租户感知的限流、审计、备份恢复、删除和平台运维面板。
+
+在这些基础完成之前，推荐保持“一次部署服务一个团队”，不在同一数据库中手工混放多个卖家数据。
+
 ## 2. 推荐技术基线
 
 ### 前端
@@ -63,7 +78,7 @@ web/src/
   App.tsx            路由与应用壳层
   features/redeem/  兑换流程
   features/delivery/交付空间和下载
-  features/admin/   运营工作台实现（公开路由为 /workspace）
+  features/admin/   运营控制台实现（非标入口为 /ops-7f3c）
   components/       跨业务复用组件
   lib/              API 客户端、格式化和校验
   styles/           Tailwind 主题和全局样式
@@ -101,13 +116,16 @@ server/
     clock/              可测试时间源
 ```
 
-当前实现尚未拆成上述模块，也没有 Redis cache 接口；本地私有存储使用 `STORAGE_DIR` 配置，MVP 限流保存在进程内。
+当前实现尚未拆成上述模块，也没有 Redis cache 接口；本地私有存储使用 `STORAGE_DIR` 配置，MVP 限流保存在进程内。商品支持草稿、实时买家页预览、内容编辑、发布、下架和归档；版本模型尚未实现。
 
 ## 5. 当前数据库模型
 
 ```text
 products
-  id, name, description, status, created_at
+  id, name, description, detail, status(DRAFT/ACTIVE/ARCHIVED), created_at
+
+product_images
+  id, product_id, object_key, alt_text, mime_type, size_bytes, created_at
 
 assets
   id, product_id, object_key, file_name, mime_type, size_bytes, sha256, created_at
@@ -128,7 +146,17 @@ download_events
 
 admin_events
   id, actor, action, resource_type, resource_id, metadata_json, created_at
+
+join_applications
+  id, organization_name, contact_name, email, desired_username, use_case,
+  status, reviewer, reviewed_at, created_at, updated_at
+
+platform_settings
+  deployment_mode, storefront_url, console_url, api_base_url,
+  operator_web_path, operator_api_path, updated_at
 ```
+
+`redeem_codes.product_id` 标识买家购买的商品。兑换流程将该值复制到 `entitlements.product_id`，复合外键约束 `(redeem_code_id, product_id)` 必须匹配。每批兑换码对应工作台中选中的一个商品；单个兑换码不会授予整个商品目录的访问权。
 
 实际建表时需要加唯一约束：
 
@@ -157,7 +185,11 @@ admin_events
 上传流程：
 
 ```text
-管理员上传单个文件 → 服务端限制请求体和文件大小
+管理员上传商品效果图 → 校验 JPEG/PNG、8 MB 上限和像素尺寸
+→ 写入 product-images 私有卷路径 → 草稿阶段由鉴权预览路由读取
+→ 商品发布后公开图片路由按商品与图片 ID 读取
+
+管理员上传单个交付文件 → 服务端限制请求体和文件大小
 → 写临时文件 → 计算 SHA-256 → 写入 private-assets 卷
 → 保存文件元数据
 ```
@@ -204,6 +236,7 @@ MVP 使用 `private-assets` Docker 卷，适合单实例功能验证。后续可
 | 能力 | MVP 状态 |
 | --- | --- |
 | 商品创建与列表 | 已实现 |
+| 草稿编辑、实时预览、发布/下架/归档 | 已实现 |
 | 单文件私有上传和 SHA-256 | 已实现；扫描未实现 |
 | 批量兑换码签发和兑换 | 已实现 |
 | 可恢复的交付访问凭证 | 已实现 |

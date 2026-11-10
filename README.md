@@ -23,6 +23,8 @@ NOVER 不是传统的多商户商城，而是“外部平台成交 + NOVER 数�
 
 第一阶段只解决可靠交付，不内置站内支付、购物车、多商户分账和复杂营销系统。
 
+当前部署模型是**单租户、自托管**：一套部署服务一个卖家或团队。React、Go、PostgreSQL 和 Docker Compose 为未来托管版提供了技术基础，但多租户 SaaS 仍需要完整的租户数据隔离、成员/RBAC、套餐计费、域名品牌和租户级运维能力，不能把当前实例直接视为多商户平台。
+
 ## 开源边界
 
 | 内容 | 是否进入本仓库 | 说明 |
@@ -64,10 +66,11 @@ ReactBits 是可复制组件参考集合，不是本项目依赖的运行时包�
 - [产品定义](docs/product-definition.md)：角色、业务流程、状态和 MVP 边界
 - [技术架构](docs/architecture.md)：前后端分层、数据模型、文件交付和安全边界
 - [迭代路线](docs/roadmap.md)：从空仓库到可运营版本的阶段计划
+- [运营控制台与 SaaS 设计](docs/admin-saas-design.md)：前后台拆分、账号准入、RBAC、租户隔离和部署配置
 
 ## 当前状态
 
-MVP 已包含 Go API、React 页面、PostgreSQL schema 和 Docker Compose。首页现在包含品牌介绍、公开测试商品目录、购买到领取的三步说明和兑换入口；商品卡可直接跳转到兑换区。运营工作台可创建商品、上传私有文件、签发兑换码、兑换并下载；版本管理、文件扫描、S3 适配、退款运营和多管理员账号系统仍在后续范围。
+MVP 已包含 Go API、React 页面、PostgreSQL schema 和 Docker Compose。首页包含品牌介绍、公开测试商品目录、购买到领取的三步说明和兑换入口；商品卡进入公开详情页。运营控制台包含数据总览、商品创建、兑换码管理、成员申请和部署设置。商品创建采用“内容与实时预览 → 效果图片 → 私有交付文件 → 发布检查”的连续流程，详细介绍支持 Markdown，并可在保存草稿后直接粘贴剪贴板图片。商品至少上传一个交付文件后才可发布；只有已发布商品可签发其专属兑换码。公开用户可以提交加入申请，但审批暂不直接开通账号；数据库账号、邀请、RBAC 和强租户隔离按 [SaaS 设计](docs/admin-saas-design.md) 分阶段实现。
 
 ## 本地运行
 
@@ -78,7 +81,7 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-打开 [http://localhost:5173](http://localhost:5173)。首页会展示品牌介绍和测试商品目录；进入“运营工作台”登录，开发环境账号密码均为 `admin`，然后可以创建商品、上传文件并签发兑换码。售卖文件保存在 Docker 私有卷 `private-assets`，数据库保存在 `postgres-data`。
+打开 [http://localhost:45173](http://localhost:45173)。公开导航不会展示运营入口；本地运营控制台位于 `http://localhost:45173/ops-7f3c`，开发环境账号密码均为 `admin`。Go API 独立暴露在 `http://localhost:48080`。售卖文件保存在 Docker 私有卷 `private-assets`，数据库保存在 `postgres-data`。
 
 本地开发前端和 API 时，先启动数据库：
 
@@ -101,7 +104,7 @@ npm run dev
 
 本地运行需要 Go 1.24+、Node.js 24+ 和 npm。PowerShell 从仓库根目录启动；Go API 使用 `.env` 中的管理员令牌和密钥。
 
-Vite 将 `/api` 请求代理至 `http://localhost:8080`。`.env.example` 只用于本地启动；公开部署前替换所有示例密钥、启用 HTTPS 并配置持久化备份。
+Vite 使用 `45173`，Go API 使用 `48080`；前端默认直接连接 API 高端口，Vite/Nginx 同时保留代理通道以兼容同源部署。`.env.example` 只用于本地启动；公开部署前替换所有示例密钥、启用 HTTPS 并配置持久化备份。
 
 ## API 入口
 
@@ -109,20 +112,32 @@ Vite 将 `/api` 请求代理至 `http://localhost:8080`。`.env.example` 只用�
 | --- | --- | --- |
 | `GET` | `/healthz` | 进程存活检查 |
 | `GET` | `/readyz` | 数据库就绪检查 |
-| `GET` | `/api/v1/products` | 首页公开商品目录 |
-| `POST` | `/api/v1/ops/login` | 运营账号密码登录，签发短期会话 |
-| `GET` | `/api/v1/ops/products` | 运营工作台商品列表 |
-| `GET` | `/api/v1/ops/activity` | 最近兑换、权益和下载活动 |
-| `POST` | `/api/v1/ops/products` | 创建商品 |
-| `POST` | `/api/v1/ops/products/{id}/assets` | 上传单个交付文件 |
-| `POST` | `/api/v1/ops/products/{id}/codes` | 签发兑换码，明文仅返回本次 |
-| `POST` | `/api/v1/ops/codes/{id}/action` | 暂停、恢复或撤销兑换凭证 |
+| `GET` | `/api/v1/products` | 首页和商品详情页使用的公开商品目录 |
+| `POST` | `/api/v1/join-applications` | 提交组织与运营账号申请 |
+| `POST` | `/api/v1/cp-7f3c/login` | 运营账号密码登录，签发短期会话 |
+| `GET` | `/api/v1/cp-7f3c/products` | 运营控制台商品列表 |
+| `GET` | `/api/v1/cp-7f3c/activity` | 最近兑换、权益和下载活动 |
+| `GET/POST` | `/api/v1/cp-7f3c/applications[...]` | 查看与审核加入申请 |
+| `GET/PUT` | `/api/v1/cp-7f3c/settings` | 保存部署拓扑和路由规划 |
+| `POST` | `/api/v1/cp-7f3c/products` | 创建商品 |
+| `PUT` | `/api/v1/cp-7f3c/products/{id}` | 保存商品名称、简介与 Markdown 详细介绍 |
+| `POST` | `/api/v1/cp-7f3c/products/{id}/status` | 发布、下架为草稿或归档商品 |
+| `GET/POST/DELETE` | `/api/v1/cp-7f3c/products/{id}/images[...]` | 鉴权预览、粘贴/上传和删除商品效果图 |
+| `POST` | `/api/v1/cp-7f3c/products/{id}/assets` | 上传单个交付文件 |
+| `POST` | `/api/v1/cp-7f3c/products/{id}/codes` | 签发绑定当前商品的兑换码 |
+| `POST` | `/api/v1/cp-7f3c/codes/{id}/action` | 暂停、恢复或撤销兑换凭证 |
 | `POST` | `/api/v1/redeem` | 兑换并取得交付凭证 |
 | `GET` | `/api/v1/delivery` | 获取商品和文件清单 |
 | `POST` | `/api/v1/assets/{id}/ticket` | 签发 5 分钟下载票据 |
 | `GET` | `/api/v1/downloads/{ticket}` | 下载私有文件 |
 
 运营 API 使用登录返回的 `Authorization: Bearer <operator-session>`；交付 API 使用兑换返回的 Bearer 凭证。开发环境使用 `admin/admin`，生产环境必须替换账号、密码和 `OPERATOR_TOKEN_KEY`，并启用 HTTPS。
+
+公开商品详情页使用前端路由 `/products/{productID}`，当前从公开目录读取商品短简介、详细介绍和效果图；真实文件清单、版本和校验信息仍需兑换后查看。效果图为公开素材，限制 JPEG/PNG、单张 8 MB 和图像尺寸；交付文件独立保存在私有目录。
+
+兑换码在签发时通过当前商品的工作台选择生成，数据库和兑换权益都绑定同一 `product_id`；复合外键阻止凭证与其他商品的权益错配。不同商品需分别签发兑换码。
+
+`OPERATOR_WEB_PATH` 和 `OPERATOR_API_PATH` 可更改默认控制台与运营 API 路径；更改后需要重新构建 Web 并重启 API。控制台内的部署设置用于保存目标配置和生成环境变量，不会动态改写运行中的路由。
 
 ## 视觉方向
 

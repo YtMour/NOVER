@@ -42,3 +42,11 @@ func TestLoadProductionRequiresAllowedEnvironmentName(t *testing.T) {
 		t.Fatal("unsupported environment should be rejected")
 	}
 }
+
+func TestLoadRejectsInvalidOperatorAPIPath(t *testing.T) {
+	setRequiredConfig(t)
+	t.Setenv("OPERATOR_API_PATH", "/admin")
+	if _, err := Load(); err == nil {
+		t.Fatal("operator API path with slashes should be rejected")
+	}
+}

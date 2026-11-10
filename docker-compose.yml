@@ -33,9 +33,12 @@ services:
       ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY:?Set ACCESS_TOKEN_KEY in .env}
       STORAGE_DIR: /var/lib/nover/files
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-524288000}
-      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:5173}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:45173}
+      OPERATOR_API_PATH: ${OPERATOR_API_PATH:-cp-7f3c}
     volumes:
       - private-assets:/var/lib/nover/files
+    ports:
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-48080}:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -45,11 +48,14 @@ services:
   web:
     build:
       context: ./web
+      args:
+        VITE_OPERATOR_PATH: ${OPERATOR_WEB_PATH:-/ops-7f3c}
+        VITE_OPERATOR_API_PATH: ${OPERATOR_API_PATH:-cp-7f3c}
     restart: unless-stopped
     depends_on:
       - api
     ports:
-      - "${WEB_BIND_ADDRESS:-127.0.0.1}:5173:80"
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_HOST_PORT:-45173}:80"
     networks:
       - private
 

@@ -19,6 +19,7 @@ type Config struct {
 	StorageDir         string
 	MaxUploadBytes     int64
 	AllowedOrigin      string
+	OperatorAPIPath    string
 	DownloadTTLSeconds int
 }
 
@@ -33,7 +34,8 @@ func Load() (Config, error) {
 		RedeemHMACKey:      []byte(os.Getenv("REDEEM_HMAC_KEY")),
 		AccessTokenKey:     []byte(os.Getenv("ACCESS_TOKEN_KEY")),
 		StorageDir:         env("STORAGE_DIR", "./runtime-data/files"),
-		AllowedOrigin:      env("ALLOWED_ORIGIN", "http://localhost:5173"),
+		AllowedOrigin:      env("ALLOWED_ORIGIN", "http://localhost:45173"),
+		OperatorAPIPath:    env("OPERATOR_API_PATH", "cp-7f3c"),
 		DownloadTTLSeconds: 300,
 	}
 	if cfg.DatabaseURL == "" {
@@ -54,6 +56,9 @@ func Load() (Config, error) {
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, errors.New("APP_ENV must be development or production")
 	}
+	if !validRouteSegment(cfg.OperatorAPIPath) {
+		return Config{}, errors.New("OPERATOR_API_PATH must be a 4-64 character lowercase route segment")
+	}
 	if cfg.Environment == "production" && (cfg.AdminUsername == "admin" || cfg.AdminPassword == "admin" || string(cfg.OperatorTokenKey) == "local-operator-token-key-change-me-0123456789" || string(cfg.RedeemHMACKey) == "local-redeem-hmac-key-change-me-0123456789" || string(cfg.AccessTokenKey) == "local-access-token-key-change-me-0123456789") {
 		return Config{}, errors.New("production environment requires replacing the sample credentials and secrets")
 	}
@@ -63,6 +68,19 @@ func Load() (Config, error) {
 	}
 	cfg.MaxUploadBytes = maxUpload
 	return cfg, nil
+}
+
+func validRouteSegment(value string) bool {
+	if len(value) < 4 || len(value) > 64 {
+		return false
+	}
+	for index, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || (index > 0 && (character == '-' || character == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func env(key, fallback string) string {

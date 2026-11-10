@@ -23,6 +23,7 @@ func New(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) *App {
 
 func (a *App) Handler() http.Handler {
 	r := chi.NewRouter()
+	operatorPath := "/" + a.cfg.OperatorAPIPath
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
@@ -31,18 +32,30 @@ func (a *App) Handler() http.Handler {
 	r.Get("/readyz", a.ready)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/products", a.listPublicProducts)
-		r.Post("/ops/login", a.operatorLogin)
+		r.Get("/products/{productID}/images/{imageID}", a.serveProductImage)
+		r.Post("/join-applications", a.createJoinApplication)
+		r.Post(operatorPath+"/login", a.operatorLogin)
 		r.Post("/redeem", a.redeem)
 		r.Get("/delivery", a.delivery)
 		r.Post("/assets/{assetID}/ticket", a.createDownloadTicket)
 		r.Get("/downloads/{token}", a.download)
-		r.Route("/ops", func(r chi.Router) {
+		r.Route(operatorPath, func(r chi.Router) {
 			r.Use(a.requireOperator)
 			r.Get("/session", a.operatorSession)
+			r.Get("/applications", a.listJoinApplications)
+			r.Post("/applications/{applicationID}/review", a.reviewJoinApplication)
+			r.Get("/settings", a.getPlatformSettings)
+			r.Put("/settings", a.updatePlatformSettings)
 			r.Get("/products", a.listProducts)
 			r.Get("/activity", a.adminActivity)
 			r.Post("/products", a.createProduct)
+			r.Put("/products/{productID}", a.updateProduct)
+			r.Post("/products/{productID}/status", a.updateProductStatus)
 			r.Post("/products/{productID}/assets", a.uploadAsset)
+			r.Get("/products/{productID}/images", a.listProductImages)
+			r.Post("/products/{productID}/images", a.uploadProductImage)
+			r.Get("/products/{productID}/images/{imageID}", a.serveOperatorProductImage)
+			r.Delete("/products/{productID}/images/{imageID}", a.deleteProductImage)
 			r.Post("/products/{productID}/codes", a.createCodes)
 			r.Post("/codes/{codeID}/action", a.updateCodeAction)
 		})
@@ -62,7 +75,7 @@ func (a *App) cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

@@ -37,7 +37,7 @@ func (a *App) operatorSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listPublicProducts(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query(r.Context(), `SELECT id, name, description, status FROM products WHERE status='ACTIVE' ORDER BY created_at DESC`)
+	rows, err := a.db.Query(r.Context(), `SELECT p.id, p.name, p.description, p.detail, p.status, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p WHERE p.status='ACTIVE' ORDER BY p.created_at DESC`)
 	if err != nil {
 		a.logError(r, "list public products failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
@@ -45,16 +45,7 @@ func (a *App) listPublicProducts(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	items := make([]product, 0)
-	for rows.Next() {
-		var item product
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Status); err != nil {
-			a.logError(r, "scan public product failed", err)
-			writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
-			return
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
+	if err := scanProducts(rows, &items); err != nil {
 		a.logError(r, "iterate public products failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
 		return

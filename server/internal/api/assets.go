@@ -45,7 +45,7 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	productID := chi.URLParam(r, "productID")
 	var exists bool
-	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND status='ACTIVE')`, productID).Scan(&exists); err != nil {
+	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND status IN ('DRAFT', 'ACTIVE'))`, productID).Scan(&exists); err != nil {
 		a.logError(r, "check product failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The file could not be uploaded.")
 		return

@@ -9,6 +9,7 @@ dist/
 build/
 coverage/
 tmp/
+output/
 
 # Local runtime state and object-storage data
 runtime-data/
