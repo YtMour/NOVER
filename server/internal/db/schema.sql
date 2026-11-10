@@ -1,3 +1,60 @@
+CREATE TABLE IF NOT EXISTS tenants (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO tenants (id, name, slug)
+VALUES ('tenant-default', 'NOVER Default Space', 'default')
+ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS operator_users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    platform_role TEXT CHECK (platform_role IS NULL OR platform_role IN ('PLATFORM_OWNER', 'PLATFORM_SUPPORT', 'PLATFORM_AUDITOR')),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
+    token_version INTEGER NOT NULL DEFAULT 1 CHECK (token_version > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS operator_users_username_idx ON operator_users (LOWER(username));
+
+CREATE TABLE IF NOT EXISTS tenant_memberships (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+    user_id TEXT NOT NULL REFERENCES operator_users(id),
+    role TEXT NOT NULL CHECK (role IN ('OWNER', 'ADMIN', 'EDITOR', 'FULFILLMENT', 'ANALYST')),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS operator_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES operator_users(id),
+    membership_id TEXT NOT NULL REFERENCES tenant_memberships(id),
+    tenant_id TEXT NOT NULL REFERENCES tenants(id),
+    token_version INTEGER NOT NULL CHECK (token_version > 0),
+    token_hash BYTEA NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE operator_sessions ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+
+CREATE INDEX IF NOT EXISTS operator_sessions_user_active_idx
+    ON operator_sessions (user_id, expires_at DESC)
+    WHERE revoked_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS products (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -140,7 +197,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
     id TEXT PRIMARY KEY CHECK (id = 'default'),
     deployment_mode TEXT NOT NULL DEFAULT 'SPLIT_ORIGIN' CHECK (deployment_mode IN ('COLOCATED', 'SPLIT_ORIGIN', 'SPLIT_APPS')),
     storefront_url TEXT NOT NULL DEFAULT 'http://localhost:45173',
-    console_url TEXT NOT NULL DEFAULT 'http://localhost:45173',
+    console_url TEXT NOT NULL DEFAULT 'http://localhost:46173',
     api_base_url TEXT NOT NULL DEFAULT 'http://localhost:48080',
     operator_web_path TEXT NOT NULL DEFAULT '/ops-7f3c',
     operator_api_path TEXT NOT NULL DEFAULT 'cp-7f3c',
@@ -150,6 +207,11 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 INSERT INTO platform_settings (id)
 VALUES ('default')
 ON CONFLICT (id) DO NOTHING;
+
+UPDATE platform_settings
+SET deployment_mode='SPLIT_APPS', console_url='http://localhost:46173', updated_at=NOW()
+WHERE id='default' AND deployment_mode='SPLIT_ORIGIN'
+  AND storefront_url='http://localhost:45173' AND console_url='http://localhost:45173';
 
 CREATE INDEX IF NOT EXISTS redeem_codes_product_status_idx ON redeem_codes(product_id, status);
 CREATE INDEX IF NOT EXISTS product_images_product_created_idx ON product_images(product_id, created_at);

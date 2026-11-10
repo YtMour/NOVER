@@ -20,8 +20,20 @@ func TestLoadDevelopmentConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Environment != "development" || cfg.MaxUploadBytes != 1024 {
+	if cfg.Environment != "development" || cfg.MaxUploadBytes != 1024 || len(cfg.AllowedOrigins) != 2 {
 		t.Fatalf("unexpected config values: %+v", cfg)
+	}
+}
+
+func TestLoadParsesMultipleAllowedOrigins(t *testing.T) {
+	setRequiredConfig(t)
+	t.Setenv("ALLOWED_ORIGINS", "https://store.example.com/, https://console.example.com")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AllowedOrigins) != 2 || cfg.AllowedOrigins[0] != "https://store.example.com" || cfg.AllowedOrigins[1] != "https://console.example.com" {
+		t.Fatalf("unexpected origins: %#v", cfg.AllowedOrigins)
 	}
 }
 

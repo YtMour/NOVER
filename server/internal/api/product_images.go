@@ -137,7 +137,7 @@ func (a *App) uploadProductImage(w http.ResponseWriter, r *http.Request) {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, action, resource_type, resource_id, metadata_json) VALUES ($1, 'PRODUCT_IMAGE_UPLOADED', 'product_image', $2, jsonb_build_object('product_id', $3::text, 'size_bytes', $4::bigint))`, eventID, item.ID, productID, item.SizeBytes)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'PRODUCT_IMAGE_UPLOADED','product_image',$3,jsonb_build_object('product_id',$4::text,'size_bytes',$5::bigint))`, eventID, operatorActor(r), item.ID, productID, item.SizeBytes)
 		}
 	}
 	if err == nil {
@@ -214,7 +214,7 @@ func (a *App) deleteProductImage(w http.ResponseWriter, r *http.Request) {
 	}
 	eventID, err := randomID()
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, action, resource_type, resource_id, metadata_json) VALUES ($1, 'PRODUCT_IMAGE_DELETED', 'product_image', $2, jsonb_build_object('product_id', $3::text))`, eventID, imageID, productID)
+		_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'PRODUCT_IMAGE_DELETED','product_image',$3,jsonb_build_object('product_id',$4::text))`, eventID, operatorActor(r), imageID, productID)
 	}
 	if err != nil {
 		a.logError(r, "audit product image delete failed", err)

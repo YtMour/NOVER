@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent } from 'react'
 import { Archive, Ban, BarChart3, Building2, Check, Copy, Eye, FileUp, ImagePlus, KeyRound, LayoutDashboard, LockKeyhole, PackagePlus, Pause, Plus, RefreshCw, RotateCcw, Save, Send, ServerCog, Settings2, ShieldCheck, TicketCheck, Trash2, UserCheck, UsersRound, X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createProduct, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadPlatformSettings, loadProductImageBlob, loadProductImages, loadProducts, operatorLogin, reviewJoinApplication, savePlatformSettings, updateCodeAction, updateProduct, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
+import { createProduct, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductImageBlob, loadProductImages, loadProducts, loadTenantMembers, operatorLogin, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
 import { StatusMessage } from '../../components/StatusMessage'
 import { ProductDetailView } from '../redeem/ProductDetailView'
-import type { AdminActivity, JoinApplication, PlatformSettings, Product, ProductDraftInput, ProductImage } from '../../types'
+import type { AdminActivity, AdminActivitySummary, JoinApplication, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, TenantMember } from '../../types'
 
-type AdminView = 'overview' | 'products' | 'codes' | 'applications' | 'settings'
+type AdminView = 'overview' | 'products' | 'codes' | 'applications' | 'members' | 'settings'
 
 export function AdminPage() {
   const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem('nover.operatorToken') ?? '')
@@ -19,8 +19,10 @@ export function AdminPage() {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const queryClient = useQueryClient()
-  const products = useQuery({ queryKey: ['admin-products', adminToken], queryFn: () => loadProducts(adminToken), enabled: adminToken.length > 0, retry: false })
-  const activity = useQuery({ queryKey: ['admin-activity', adminToken], queryFn: () => loadActivity(adminToken), enabled: adminToken.length > 0, retry: false })
+  const session = useQuery({ queryKey: ['operator-session', adminToken], queryFn: () => loadOperatorSession(adminToken), enabled: adminToken.length > 0, retry: false })
+  const hasPermission = (permission: string) => session.data?.permissions.includes(permission) ?? false
+  const products = useQuery({ queryKey: ['admin-products', adminToken], queryFn: () => loadProducts(adminToken), enabled: adminToken.length > 0 && hasPermission('product.read'), retry: false })
+  const activity = useQuery({ queryKey: ['admin-activity', adminToken], queryFn: () => loadActivity(adminToken), enabled: adminToken.length > 0 && hasPermission('activity.read'), retry: false })
 
   useEffect(() => {
     if (products.data && !selectedId && !creatingDraft && products.data.items[0]) setSelectedId(products.data.items[0].id)
@@ -30,9 +32,10 @@ export function AdminPage() {
 
   const loginMutation = useMutation({
     mutationFn: () => operatorLogin(username, password),
-    onSuccess: ({ access_token }) => {
+    onSuccess: ({ access_token, session: identity }) => {
       sessionStorage.setItem('nover.operatorToken', access_token)
       setAdminToken(access_token)
+      queryClient.setQueryData(['operator-session', access_token], identity)
       setPassword('')
       setError('')
     },
@@ -43,13 +46,15 @@ export function AdminPage() {
     loginMutation.mutate()
   }
 
-  function disconnect() {
+  async function disconnect() {
+    if (adminToken) await revokeOperatorSession(adminToken).catch(() => undefined)
     sessionStorage.removeItem('nover.operatorToken')
     setAdminToken('')
     setPassword('')
     setSelectedId('')
     setCreatingDraft(false)
     setCreatedCodes([])
+    queryClient.removeQueries({ queryKey: ['operator-session', adminToken] })
   }
 
   function selectProduct(productId: string) {
@@ -69,7 +74,11 @@ export function AdminPage() {
     setError('')
   }
 
-  if (!adminToken || products.isError) {
+  if (adminToken && session.isLoading) {
+    return <section className="admin-lock surface-panel"><div className="tool-icon"><LockKeyhole size={19} /></div><span className="section-kicker">OPERATOR SESSION</span><h1 className="page-title">正在验证会话</h1><p>正在读取账号、空间和角色权限。</p></section>
+  }
+
+  if (!adminToken || session.isError || products.isError) {
     return (
       <section className="admin-lock surface-panel">
         <div className="tool-icon"><LockKeyhole size={19} /></div>
@@ -81,7 +90,7 @@ export function AdminPage() {
           <input id="operator-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required />
           <label htmlFor="operator-password">密码</label>
           <input id="operator-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
-          {(products.isError || loginMutation.isError) && <StatusMessage>{loginMutation.error?.message ?? products.error?.message ?? '登录状态已失效，请重新登录。'}</StatusMessage>}
+          {(session.isError || products.isError || loginMutation.isError) && <StatusMessage>{loginMutation.error?.message ?? session.error?.message ?? products.error?.message ?? '登录状态已失效，请重新登录。'}</StatusMessage>}
           <button className="button button-primary" type="submit" disabled={loginMutation.isPending}><LockKeyhole size={16} />{loginMutation.isPending ? '登录中…' : '进入工作台'}</button>
         </form>
       </section>
@@ -108,22 +117,23 @@ export function AdminPage() {
           <div className="eyebrow"><span className="eyebrow-line" /> OPERATOR CONSOLE</div>
           <h1 className="page-title">运营工作台</h1>
         </div>
-        <div className="operator-session"><div><span>当前空间</span><strong>知屿默认空间 · 超级管理员</strong></div><button className="icon-button" title="退出运营账号" aria-label="退出运营账号" onClick={disconnect}><LockKeyhole size={18} /></button></div>
+        <div className="operator-session"><div><span>{session.data?.username} · 当前空间</span><strong>{session.data?.tenant_name} · {roleLabel(session.data?.role)}</strong></div><button className="icon-button" title="退出运营账号" aria-label="退出运营账号" onClick={() => void disconnect()}><LockKeyhole size={18} /></button></div>
       </div>
 
       <nav className="admin-view-tabs" aria-label="运营功能">
         <span className="admin-nav-label">运营</span>
         <button className={view === 'overview' ? 'is-active' : ''} onClick={() => setView('overview')}><LayoutDashboard size={16} />数据总览</button>
-        <button className={view === 'products' ? 'is-active' : ''} onClick={() => setView('products')}><PackagePlus size={16} />商品创建</button>
-        <button className={view === 'codes' ? 'is-active' : ''} onClick={() => setView('codes')}><TicketCheck size={16} />兑换码管理</button>
+        {hasPermission('product.write') && <button className={view === 'products' ? 'is-active' : ''} onClick={() => setView('products')}><PackagePlus size={16} />商品创建</button>}
+        {hasPermission('code.issue') && <button className={view === 'codes' ? 'is-active' : ''} onClick={() => setView('codes')}><TicketCheck size={16} />兑换码管理</button>}
         <span className="admin-nav-label">组织</span>
-        <button className={view === 'applications' ? 'is-active' : ''} onClick={() => setView('applications')}><UsersRound size={16} />成员申请</button>
+        {hasPermission('application.read') && <button className={view === 'applications' ? 'is-active' : ''} onClick={() => setView('applications')}><UsersRound size={16} />成员申请</button>}
+        {hasPermission('member.read') && <button className={view === 'members' ? 'is-active' : ''} onClick={() => setView('members')}><ShieldCheck size={16} />成员与权限</button>}
         <span className="admin-nav-label">系统</span>
-        <button className={view === 'settings' ? 'is-active' : ''} onClick={() => setView('settings')}><Settings2 size={16} />部署设置</button>
-        <div className="admin-nav-context"><Building2 size={15} /><div><strong>单租户运行</strong><span>多租户隔离待迁移</span></div></div>
+        {hasPermission('settings.read') && <button className={view === 'settings' ? 'is-active' : ''} onClick={() => setView('settings')}><Settings2 size={16} />部署设置</button>}
+        <div className="admin-nav-context"><Building2 size={15} /><div><strong>身份与 RBAC 已启用</strong><span>业务数据租户作用域待迁移</span></div></div>
       </nav>
 
-      {view === 'overview' && <AdminOverview products={products.data?.items ?? []} activity={activity.data?.items ?? []} loading={products.isLoading || activity.isLoading} />}
+      {view === 'overview' && <AdminOverview products={products.data?.items ?? []} summary={activity.data?.summary} loading={products.isLoading || activity.isLoading} />}
 
       {view === 'products' && <><section className="product-studio">
         <div className="product-studio-heading">
@@ -186,15 +196,16 @@ export function AdminPage() {
           </div>
         ) : <div className="empty-state">签发兑换码后，记录会显示在这里。</div>}
       </section></div>}
-      {view === 'applications' && <ApplicationsView token={adminToken} />}
-      {view === 'settings' && <PlatformSettingsView token={adminToken} />}
+      {view === 'applications' && <ApplicationsView token={adminToken} canReview={hasPermission('application.review')} />}
+      {view === 'members' && <MembersView token={adminToken} session={session.data!} />}
+      {view === 'settings' && <PlatformSettingsView token={adminToken} canManage={hasPermission('settings.manage')} />}
       {error && <StatusMessage>{error}</StatusMessage>}
       {notice && <StatusMessage kind="success">{notice}</StatusMessage>}
     </section>
   )
 }
 
-function ApplicationsView({ token }: { token: string }) {
+function ApplicationsView({ token, canReview }: { token: string; canReview: boolean }) {
   const queryClient = useQueryClient()
   const applications = useQuery({ queryKey: ['join-applications', token], queryFn: () => loadJoinApplications(token), retry: false })
   const mutation = useMutation({
@@ -205,28 +216,64 @@ function ApplicationsView({ token }: { token: string }) {
   const pending = items.filter((item) => item.status === 'PENDING' || item.status === 'REVIEWING').length
   return <section className="applications-view">
     <div className="overview-heading"><div><span className="section-kicker">ACCESS REQUESTS</span><h2>成员与租户申请</h2></div><span>{pending} 项待处理</span></div>
-    <div className="application-policy-banner"><ShieldCheck size={19} /><div><strong>资格审批与账号开通分离</strong><span>通过申请仅确认准入资格；租户隔离、角色分配和邀请设密完成后才开通登录。</span></div></div>
+    <div className="application-policy-banner"><ShieldCheck size={19} /><div><strong>资格审批与账号开通分离</strong><span>{canReview ? '通过申请仅确认准入资格；租户隔离、角色分配和邀请设密完成后才开通登录。' : '当前角色拥有申请只读权限，审核操作由平台所有者完成。'}</span></div></div>
     {applications.isError && <StatusMessage>{applications.error.message}</StatusMessage>}
     {mutation.isError && <StatusMessage>{mutation.error.message}</StatusMessage>}
-    {applications.isLoading ? <div className="empty-state">正在读取申请…</div> : items.length ? <div className="application-list">{items.map((item) => <ApplicationRow key={item.id} item={item} busy={mutation.isPending} onAction={(action) => mutation.mutate({ id: item.id, action })} />)}</div> : <div className="application-empty"><UsersRound size={24} /><strong>暂无加入申请</strong><span>公开申请提交后会显示在这里。</span></div>}
+    {applications.isLoading ? <div className="empty-state">正在读取申请…</div> : items.length ? <div className="application-list">{items.map((item) => <ApplicationRow key={item.id} item={item} busy={mutation.isPending} canReview={canReview} onAction={(action) => mutation.mutate({ id: item.id, action })} />)}</div> : <div className="application-empty"><UsersRound size={24} /><strong>暂无加入申请</strong><span>公开申请提交后会显示在这里。</span></div>}
   </section>
 }
 
-function ApplicationRow({ item, busy, onAction }: { item: JoinApplication; busy: boolean; onAction: (action: 'REVIEW' | 'APPROVE' | 'REJECT') => void }) {
+function ApplicationRow({ item, busy, canReview, onAction }: { item: JoinApplication; busy: boolean; canReview: boolean; onAction: (action: 'REVIEW' | 'APPROVE' | 'REJECT') => void }) {
   const statusText = { PENDING: '待审核', REVIEWING: '审核中', APPROVED: '资格通过', REJECTED: '已拒绝' }[item.status]
   return <article className="application-row">
     <div className="application-identity"><span className="application-avatar">{item.organization_name.slice(0, 1).toUpperCase()}</span><div><strong>{item.organization_name}</strong><span>{item.contact_name} · {item.email}</span></div></div>
     <div className="application-request"><span>期望账号</span><code>{item.desired_username}</code><p>{item.use_case}</p></div>
     <div className="application-meta"><span className={`status-pill application-status--${item.status.toLowerCase()}`}>{statusText}</span><small>{new Date(item.created_at).toLocaleString('zh-CN')}</small></div>
     <div className="application-actions">
-      {item.status === 'PENDING' && <button className="button button-secondary" type="button" disabled={busy} onClick={() => onAction('REVIEW')}><Eye size={15} />进入审核</button>}
-      {(item.status === 'PENDING' || item.status === 'REVIEWING') && <button className="icon-button icon-button--small" type="button" title="通过资格审核" aria-label="通过资格审核" disabled={busy} onClick={() => onAction('APPROVE')}><UserCheck size={15} /></button>}
-      {(item.status === 'PENDING' || item.status === 'REVIEWING') && <button className="icon-button icon-button--small icon-button--danger" type="button" title="拒绝申请" aria-label="拒绝申请" disabled={busy} onClick={() => onAction('REJECT')}><X size={15} /></button>}
+      {canReview && item.status === 'PENDING' && <button className="button button-secondary" type="button" disabled={busy} onClick={() => onAction('REVIEW')}><Eye size={15} />进入审核</button>}
+      {canReview && (item.status === 'PENDING' || item.status === 'REVIEWING') && <button className="icon-button icon-button--small" type="button" title="通过资格审核" aria-label="通过资格审核" disabled={busy} onClick={() => onAction('APPROVE')}><UserCheck size={15} /></button>}
+      {canReview && (item.status === 'PENDING' || item.status === 'REVIEWING') && <button className="icon-button icon-button--small icon-button--danger" type="button" title="拒绝申请" aria-label="拒绝申请" disabled={busy} onClick={() => onAction('REJECT')}><X size={15} /></button>}
     </div>
   </article>
 }
 
-function PlatformSettingsView({ token }: { token: string }) {
+function MembersView({ token, session }: { token: string; session: OperatorSession }) {
+  const members = useQuery({ queryKey: ['tenant-members', token], queryFn: () => loadTenantMembers(token), retry: false })
+  const capabilityRows = [
+    ['OWNER', '空间、成员、商品、交付和兑换码的全部租户权限'],
+    ['ADMIN', '日常运营与成员管理，不承担平台级配置职责'],
+    ['EDITOR', '编辑商品内容与效果图，不直接发布或签发兑换码'],
+    ['FULFILLMENT', '上传交付文件、签发和管理兑换凭证'],
+    ['ANALYST', '只读查看商品与交付汇总'],
+  ]
+  return <section className="members-view">
+    <div className="overview-heading"><div><span className="section-kicker">TENANT ACCESS</span><h2>成员与权限</h2></div><span>{members.isLoading ? '正在同步成员' : `${members.data?.items.length ?? 0} 位成员`}</span></div>
+    <div className="member-security-banner"><ShieldCheck size={19} /><div><strong>权限由后端会话强制校验</strong><span>当前账号：{session.username} · {platformRoleLabel(session.platform_role)}。隐藏按钮只优化界面，API 仍会独立检查每个权限点。</span></div></div>
+    {members.isError && <StatusMessage>{members.error.message}</StatusMessage>}
+    <div className="members-layout">
+      <div className="member-list-panel">
+        <div className="member-list-head"><span>成员</span><span>角色</span><span>最近会话</span><span>状态</span></div>
+        {members.isLoading ? <div className="empty-state">正在读取成员…</div> : members.data?.items.map((member) => <MemberRow key={member.user_id} member={member} />)}
+      </div>
+      <aside className="role-capability-panel">
+        <span className="section-kicker">ROLE MATRIX</span><h3>租户角色边界</h3>
+        <div className="role-capability-list">{capabilityRows.map(([role, description]) => <div key={role}><strong>{roleLabel(role as OperatorSession['role'])}</strong><span>{description}</span></div>)}</div>
+        <p>平台角色与租户角色相互独立。申请审核和部署设置属于平台权限，不随租户管理员角色自动获得。</p>
+      </aside>
+    </div>
+  </section>
+}
+
+function MemberRow({ member }: { member: TenantMember }) {
+  return <article className="member-row">
+    <div className="member-identity"><span className="application-avatar">{member.display_name.slice(0, 1).toUpperCase()}</span><div><strong>{member.display_name}</strong><span>@{member.username} · {platformRoleLabel(member.platform_role)}</span></div></div>
+    <span className="role-badge">{roleLabel(member.role)}</span>
+    <span className="member-last-active">{member.last_active_at ? `最近会话 ${new Date(member.last_active_at).toLocaleString('zh-CN')}` : '尚无会话'}</span>
+    <span className={`status-pill member-status--${member.status.toLowerCase()}`}>{member.status === 'ACTIVE' ? '正常' : '已停用'}</span>
+  </article>
+}
+
+function PlatformSettingsView({ token, canManage }: { token: string; canManage: boolean }) {
   const settings = useQuery({ queryKey: ['platform-settings', token], queryFn: () => loadPlatformSettings(token), retry: false })
   const [draft, setDraft] = useState<Omit<PlatformSettings, 'updated_at'> | null>(null)
   const [copied, setCopied] = useState(false)
@@ -239,7 +286,7 @@ function PlatformSettingsView({ token }: { token: string }) {
   const mutation = useMutation({ mutationFn: () => savePlatformSettings(token, draft!), onSuccess: (result) => { const { updated_at: _, ...nextDraft } = result; setDraft(nextDraft) } })
   if (settings.isError) return <StatusMessage>{settings.error.message}</StatusMessage>
   if (settings.isLoading || !draft) return <div className="empty-state">正在读取部署设置…</div>
-  const envSnippet = `OPERATOR_WEB_PATH=${draft.operator_web_path}\nOPERATOR_API_PATH=${draft.operator_api_path}\nALLOWED_ORIGIN=${draft.console_url}`
+  const envSnippet = `STOREFRONT_URL=${draft.storefront_url}\nCONSOLE_URL=${draft.console_url}\nOPERATOR_WEB_PATH=${draft.operator_web_path}\nOPERATOR_API_PATH=${draft.operator_api_path}\nALLOWED_ORIGINS=${draft.storefront_url},${draft.console_url}`
   async function copyConfig() {
     await navigator.clipboard.writeText(envSnippet)
     setCopied(true)
@@ -248,16 +295,16 @@ function PlatformSettingsView({ token }: { token: string }) {
   return <section className="platform-settings-view">
     <div className="overview-heading"><div><span className="section-kicker">DEPLOYMENT CONTROL</span><h2>前后端与路由设置</h2></div><span>保存规划 · 部署时生效</span></div>
     <div className="settings-grid">
-      <form className="admin-section settings-form stack-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate() }}>
+      <form className="admin-section settings-form stack-form" onSubmit={(event) => { event.preventDefault(); if (canManage) mutation.mutate() }}>
         <div className="admin-section-heading"><div className="tool-icon"><ServerCog size={18} /></div><div><span className="section-kicker">ORIGINS</span><h2>服务地址</h2></div></div>
-        <label>部署模式<select value={draft.deployment_mode} onChange={(event) => setDraft({ ...draft, deployment_mode: event.target.value as PlatformSettings['deployment_mode'] })}><option value="COLOCATED">同源部署</option><option value="SPLIT_ORIGIN">前端与 API 分端口/域名</option><option value="SPLIT_APPS">用户端与控制台独立构建</option></select></label>
-        <label>用户端地址<input type="url" value={draft.storefront_url} onChange={(event) => setDraft({ ...draft, storefront_url: event.target.value })} required /></label>
-        <label>控制台地址<input type="url" value={draft.console_url} onChange={(event) => setDraft({ ...draft, console_url: event.target.value })} required /></label>
-        <label>API 地址<input type="url" value={draft.api_base_url} onChange={(event) => setDraft({ ...draft, api_base_url: event.target.value })} required /></label>
-        <div className="settings-path-grid"><label>控制台路由<input value={draft.operator_web_path} onChange={(event) => setDraft({ ...draft, operator_web_path: event.target.value.toLowerCase() })} pattern="/[a-z0-9][a-z0-9_\-]{3,63}" required /></label><label>运营 API 段<input value={draft.operator_api_path} onChange={(event) => setDraft({ ...draft, operator_api_path: event.target.value.toLowerCase() })} pattern="[a-z0-9][a-z0-9_\-]{3,63}" required /></label></div>
+        <label>部署模式<select value={draft.deployment_mode} disabled={!canManage} onChange={(event) => setDraft({ ...draft, deployment_mode: event.target.value as PlatformSettings['deployment_mode'] })}><option value="COLOCATED">同源部署</option><option value="SPLIT_ORIGIN">前端与 API 分端口/域名</option><option value="SPLIT_APPS">用户端与控制台独立构建</option></select></label>
+        <label>用户端地址<input type="url" value={draft.storefront_url} disabled={!canManage} onChange={(event) => setDraft({ ...draft, storefront_url: event.target.value })} required /></label>
+        <label>控制台地址<input type="url" value={draft.console_url} disabled={!canManage} onChange={(event) => setDraft({ ...draft, console_url: event.target.value })} required /></label>
+        <label>API 地址<input type="url" value={draft.api_base_url} disabled={!canManage} onChange={(event) => setDraft({ ...draft, api_base_url: event.target.value })} required /></label>
+        <div className="settings-path-grid"><label>控制台路由<input value={draft.operator_web_path} disabled={!canManage} onChange={(event) => setDraft({ ...draft, operator_web_path: event.target.value.toLowerCase() })} pattern="/[a-z0-9][a-z0-9_\-]{3,63}" required /></label><label>运营 API 段<input value={draft.operator_api_path} disabled={!canManage} onChange={(event) => setDraft({ ...draft, operator_api_path: event.target.value.toLowerCase() })} pattern="[a-z0-9][a-z0-9_\-]{3,63}" required /></label></div>
         {mutation.isError && <StatusMessage>{mutation.error.message}</StatusMessage>}
         {mutation.isSuccess && <StatusMessage kind="success">设置规划已保存。重新构建 Web/API 后应用新路由。</StatusMessage>}
-        <button className="button button-primary" type="submit" disabled={mutation.isPending}><Save size={15} />{mutation.isPending ? '保存中…' : '保存部署规划'}</button>
+        {canManage ? <button className="button button-primary" type="submit" disabled={mutation.isPending}><Save size={15} />{mutation.isPending ? '保存中…' : '保存部署规划'}</button> : <StatusMessage kind="success">当前平台角色拥有只读访问。</StatusMessage>}
       </form>
       <aside className="settings-deployment-panel">
         <div className="tool-icon tool-icon--blue"><ShieldCheck size={18} /></div><span className="section-kicker">APPLY CONFIGURATION</span><h3>部署配置</h3><p>运行路由由构建参数和 API 启动环境决定。数据库保存的是目标配置，不会在请求处理中动态改写路由。</p>
@@ -269,21 +316,22 @@ function PlatformSettingsView({ token }: { token: string }) {
   </section>
 }
 
-function AdminOverview({ products, activity, loading }: { products: Product[]; activity: AdminActivity[]; loading: boolean }) {
+function AdminOverview({ products, summary, loading }: { products: Product[]; summary?: AdminActivitySummary; loading: boolean }) {
   const activeProducts = products.filter((item) => item.status === 'ACTIVE').length
-  const redeemed = activity.filter((item) => item.code_status === 'REDEEMED').length
-  const downloadEvents = activity.reduce((sum, item) => sum + item.download_events, 0)
+  const redeemed = summary?.redeemed_codes ?? 0
+  const totalCodes = summary?.total_codes ?? 0
+  const downloadEvents = summary?.download_events ?? 0
   const productRows = products.map((product) => {
-    const codes = activity.filter((item) => item.product_name === product.name)
-    return { product, codes: codes.length, redeemed: codes.filter((item) => item.code_status === 'REDEEMED').length, downloads: codes.reduce((sum, item) => sum + item.download_events, 0) }
+    const row = summary?.products.find((item) => item.product_id === product.id)
+    return { product, codes: row?.codes ?? 0, redeemed: row?.redeemed ?? 0, downloads: row?.download_events ?? 0 }
   })
   const maxCodes = Math.max(1, ...productRows.map((row) => row.codes))
   return <section className="admin-overview">
     <div className="overview-heading"><div><span className="section-kicker">OPERATIONS SNAPSHOT</span><h2>商品与交付总览</h2></div><span>{loading ? '正在同步数据' : '当前部署实时汇总'}</span></div>
     <div className="metric-grid">
       <article><PackagePlus size={17} /><span>商品</span><strong>{products.length}</strong><small>{activeProducts} 个已发布</small></article>
-      <article><KeyRound size={17} /><span>兑换码</span><strong>{activity.length}</strong><small>{activity.length - redeemed} 个未兑换或已停用</small></article>
-      <article><Check size={17} /><span>已兑换</span><strong>{redeemed}</strong><small>{activity.length ? Math.round(redeemed / activity.length * 100) : 0}% 兑换率</small></article>
+      <article><KeyRound size={17} /><span>兑换码</span><strong>{totalCodes}</strong><small>{totalCodes - redeemed} 个未兑换或已停用</small></article>
+      <article><Check size={17} /><span>已兑换</span><strong>{redeemed}</strong><small>{totalCodes ? Math.round(redeemed / totalCodes * 100) : 0}% 兑换率</small></article>
       <article><BarChart3 size={17} /><span>文件请求</span><strong>{downloadEvents}</strong><small>累计下载事件</small></article>
     </div>
     <div className="product-performance">
@@ -294,7 +342,7 @@ function AdminOverview({ products, activity, loading }: { products: Product[]; a
   </section>
 }
 
-function ActivityRow({ item, token, onChanged, onError }: { item: { code_id: string; product_name: string; code_suffix: string; code_status: string; external_order_ref: string; code_expires_at: string; redeemed_at: string | null; entitlement_until: string | null; downloads_issued: number; download_events: number }; token: string; onChanged: () => void; onError: (error: Error) => void }) {
+function ActivityRow({ item, token, onChanged, onError }: { item: AdminActivity; token: string; onChanged: () => void; onError: (error: Error) => void }) {
   const mutation = useMutation({
     mutationFn: (action: 'SUSPEND' | 'RESUME' | 'REVOKE') => updateCodeAction(token, item.code_id, action),
     onSuccess: onChanged,
@@ -449,6 +497,16 @@ function usePrivateProductImageURLs(token: string, productId: string, images: Pr
 
 function productStatusLabel(status: Product['status']) {
   return { DRAFT: '草稿', ACTIVE: '已发布', ARCHIVED: '已归档' }[status]
+}
+
+function roleLabel(role?: OperatorSession['role']) {
+  if (!role) return '未分配角色'
+  return { OWNER: '空间所有者', ADMIN: '管理员', EDITOR: '内容编辑', FULFILLMENT: '交付运营', ANALYST: '数据分析' }[role]
+}
+
+function platformRoleLabel(role: OperatorSession['platform_role']) {
+  if (!role) return '租户成员'
+  return { PLATFORM_OWNER: '平台所有者', PLATFORM_SUPPORT: '平台支持', PLATFORM_AUDITOR: '平台审计' }[role]
 }
 
 function AssetUpload({ token, productId, enabled, onUploaded, onError }: { token: string; productId: string; enabled: boolean; onUploaded: () => Promise<void> | void; onError: (error: Error) => void }) {

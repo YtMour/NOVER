@@ -37,6 +37,10 @@ func main() {
 		logger.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
+	if err := db.EnsureBootstrapIdentity(ctx, pool, cfg.AdminUsername, cfg.AdminPassword, cfg.DefaultTenantName); err != nil {
+		logger.Error("bootstrap operator identity failed", "error", err)
+		os.Exit(1)
+	}
 	if err := os.MkdirAll(cfg.StorageDir, 0o750); err != nil {
 		logger.Error("storage directory initialization failed", "error", err)
 		os.Exit(1)

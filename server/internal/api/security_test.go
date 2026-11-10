@@ -53,20 +53,28 @@ func TestRedeemCodeHashAndAccessToken(t *testing.T) {
 
 func TestOperatorTokenVerification(t *testing.T) {
 	secret := []byte("operator-token-secret-with-32-bytes-min")
-	token, expiresAt, err := newOperatorToken(secret, "operator", time.Hour)
+	token, expiresAt, err := newOperatorToken(secret, "session-1", "user-1", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !expiresAt.After(time.Now()) {
 		t.Fatal("operator token should expire in the future")
 	}
-	if !verifyOperatorToken(secret, token, "operator") {
+	claims, ok := verifyOperatorToken(secret, token)
+	if !ok {
 		t.Fatal("valid operator token was rejected")
 	}
-	if verifyOperatorToken(secret, token, "other-operator") {
-		t.Fatal("token was accepted for another operator")
+	if claims.SessionID != "session-1" || claims.UserID != "user-1" {
+		t.Fatalf("unexpected claims: %#v", claims)
 	}
-	if verifyOperatorToken([]byte("another-secret-with-32-bytes-minimum"), token, "operator") {
+	if _, ok := verifyOperatorToken([]byte("another-secret-with-32-bytes-minimum"), token); ok {
 		t.Fatal("token was accepted with another signing secret")
+	}
+	expired, _, err := newOperatorToken(secret, "session-2", "user-1", -time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := verifyOperatorToken(secret, expired); ok {
+		t.Fatal("expired operator token was accepted")
 	}
 }

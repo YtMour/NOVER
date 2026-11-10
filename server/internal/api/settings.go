@@ -72,7 +72,7 @@ func (a *App) updatePlatformSettings(w http.ResponseWriter, r *http.Request) {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'PLATFORM_SETTINGS_UPDATED','platform_settings','default',jsonb_build_object('deployment_mode',$3::text,'operator_web_path',$4::text,'operator_api_path',$5::text))`, eventID, a.cfg.AdminUsername, input.DeploymentMode, input.OperatorWebPath, input.OperatorAPIPath)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'PLATFORM_SETTINGS_UPDATED','platform_settings','default',jsonb_build_object('deployment_mode',$3::text,'operator_web_path',$4::text,'operator_api_path',$5::text))`, eventID, operatorActor(r), input.DeploymentMode, input.OperatorWebPath, input.OperatorAPIPath)
 		}
 	}
 	if err == nil {

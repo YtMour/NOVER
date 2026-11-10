@@ -83,7 +83,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, action, resource_type, resource_id, metadata_json) VALUES ($1, 'CODES_ISSUED', 'product', $2, jsonb_build_object('count', $3::integer))`, eventID, productID, input.Count); err != nil {
+	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'CODES_ISSUED','product',$3,jsonb_build_object('count',$4::integer))`, eventID, operatorActor(r), productID, input.Count); err != nil {
 		a.logError(r, "record code issuance failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return

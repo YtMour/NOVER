@@ -135,7 +135,7 @@ func (a *App) reviewJoinApplication(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var item joinApplication
-	err = tx.QueryRow(r.Context(), `UPDATE join_applications SET status=$2, reviewer=$3, reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING id, organization_name, contact_name, email, desired_username, use_case, status, reviewer, reviewed_at, created_at, updated_at`, chi.URLParam(r, "applicationID"), nextStatus, a.cfg.AdminUsername).Scan(&item.ID, &item.OrganizationName, &item.ContactName, &item.Email, &item.DesiredUsername, &item.UseCase, &item.Status, &item.Reviewer, &item.ReviewedAt, &item.CreatedAt, &item.UpdatedAt)
+	err = tx.QueryRow(r.Context(), `UPDATE join_applications SET status=$2, reviewer=$3, reviewed_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING id, organization_name, contact_name, email, desired_username, use_case, status, reviewer, reviewed_at, created_at, updated_at`, chi.URLParam(r, "applicationID"), nextStatus, operatorActor(r)).Scan(&item.ID, &item.OrganizationName, &item.ContactName, &item.Email, &item.DesiredUsername, &item.UseCase, &item.Status, &item.Reviewer, &item.ReviewedAt, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "application_not_found", "The application was not found.")
 		return
@@ -144,7 +144,7 @@ func (a *App) reviewJoinApplication(w http.ResponseWriter, r *http.Request) {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'JOIN_APPLICATION_REVIEWED','join_application',$3,jsonb_build_object('status',$4::text))`, eventID, a.cfg.AdminUsername, item.ID, item.Status)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'JOIN_APPLICATION_REVIEWED','join_application',$3,jsonb_build_object('status',$4::text))`, eventID, operatorActor(r), item.ID, item.Status)
 		}
 	}
 	if err == nil {

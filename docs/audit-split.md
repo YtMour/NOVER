@@ -1,0 +1,67 @@
+# 前后台拆分验收记录
+
+日期：2026-11-10
+
+## 摘要
+
+本轮完成用户端与运营控制台的独立化：用户端运行在 `45173`，控制台运行在 `46173/ops-7f3c`，两者分别构建、分别打包、分别部署，并通过显式 CORS 与同一个 Go API 通信。用户端入口不再加载运营登录、后台页面或运营 API 客户端。
+
+## 描述
+
+本次调整覆盖四个范围：
+
+1. **前端边界**：`web/` 负责公开商品、兑换、交付和申请；`console/` 负责登录、商品管理、兑换码、成员权限和部署设置。
+2. **部署边界**：Docker Compose 增加独立 `console` 服务、端口、Nginx 配置和构建参数。
+3. **安全边界**：公开 Origin 与控制台 Origin 使用显式白名单；运营 API 继续使用服务端会话、RBAC 和撤销机制。
+4. **体验边界**：控制台拥有独立顶部壳层、暗色模式、移动端布局和懒加载入口；用户端的 `/ops-7f3c` 不显示后台登录。
+
+## 结论
+
+用户端和运营控制台已经是两个独立的前端应用，不再通过同一个 React 路由壳层提供后台页面。
+
+| 项目 | 验收结果 |
+| --- | --- |
+| 用户端 | `http://localhost:45173/`，只包含商品、兑换、交付和加入申请 |
+| 控制台 | `http://localhost:46173/ops-7f3c`，根路径自动跳转到非标运营路径 |
+| API | `http://localhost:48080`，显式允许 `45173` 与 `46173` 两个 Origin |
+| 用户端访问 `/ops-7f3c` | 回到公开首页，不显示登录或后台导航 |
+| 控制台壳层 | 不包含“交付门户”、公开站点 footer 或用户端导航 |
+| 登录与退出 | `admin/admin` 登录通过；退出后服务端会话返回 `401` |
+| 视觉 | 桌面浅色、桌面暗色、390px 移动端均无横向溢出、破图或未命名按钮 |
+| 构建 | 用户端不含后台 JS/API 客户端；两端 CSS 已按应用裁剪 |
+| 控制台工作区 | 商品创建、兑换码管理、成员申请、部署设置均可打开且桌面无横向溢出 |
+
+## 证据
+
+自动化脚本：`tmp/qa/audit-split-ui.cjs`
+
+工作区回归脚本：`tmp/qa/audit-console-views.cjs`
+
+截图目录：`output/audit-split/`
+
+- `01-storefront-home-light.png`：公开首页
+- `02-storefront-join-light.png`：加入申请与独立控制台外链
+- `03-console-login-light.png`：独立控制台登录页
+- `04-console-overview-light.png`：运营总览
+- `05-console-members-dark.png`：暗色成员与权限页
+- `06-storefront-join-mobile.png`：390px 用户端
+- `07-console-members-mobile.png`：390px 控制台
+
+## 检查命令
+
+```text
+go test ./...
+go vet ./...
+web: npm run typecheck && npm run build
+console: npm run typecheck && npm run build
+docker compose config --quiet
+git diff --check
+```
+
+以上检查均通过。构建仍会输出 Zod 依赖的 Rollup 注释提示，不影响产物或运行时。
+
+## 后续风险
+
+1. 当前 Compose 仍是单租户自托管，业务表的强制 `tenant_id`、邀请设密和 MFA 尚未完成。
+2. 生产环境还需要独立域名、CI 发布/回滚、TLS、访问网关和密钥轮换。
+3. 真实出售文件仍应只通过运营端或私有对象存储注入，不进入仓库和镜像。

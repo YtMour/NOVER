@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -18,8 +19,9 @@ type Config struct {
 	AccessTokenKey     []byte
 	StorageDir         string
 	MaxUploadBytes     int64
-	AllowedOrigin      string
+	AllowedOrigins     []string
 	OperatorAPIPath    string
+	DefaultTenantName  string
 	DownloadTTLSeconds int
 }
 
@@ -34,8 +36,9 @@ func Load() (Config, error) {
 		RedeemHMACKey:      []byte(os.Getenv("REDEEM_HMAC_KEY")),
 		AccessTokenKey:     []byte(os.Getenv("ACCESS_TOKEN_KEY")),
 		StorageDir:         env("STORAGE_DIR", "./runtime-data/files"),
-		AllowedOrigin:      env("ALLOWED_ORIGIN", "http://localhost:45173"),
+		AllowedOrigins:     originList(),
 		OperatorAPIPath:    env("OPERATOR_API_PATH", "cp-7f3c"),
+		DefaultTenantName:  env("DEFAULT_TENANT_NAME", "知屿默认空间"),
 		DownloadTTLSeconds: 300,
 	}
 	if cfg.DatabaseURL == "" {
@@ -43,6 +46,12 @@ func Load() (Config, error) {
 	}
 	if cfg.AdminUsername == "" || cfg.AdminPassword == "" {
 		return Config{}, errors.New("ADMIN_USERNAME and ADMIN_PASSWORD are required")
+	}
+	if cfg.DefaultTenantName == "" {
+		return Config{}, errors.New("DEFAULT_TENANT_NAME is required")
+	}
+	if len(cfg.AllowedOrigins) == 0 {
+		return Config{}, errors.New("ALLOWED_ORIGINS must contain at least one origin")
 	}
 	if len(cfg.OperatorTokenKey) < 32 {
 		return Config{}, errors.New("OPERATOR_TOKEN_KEY must contain at least 32 characters")
@@ -88,4 +97,18 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func originList() []string {
+	value := os.Getenv("ALLOWED_ORIGINS")
+	if value == "" {
+		value = env("ALLOWED_ORIGIN", "http://localhost:45173,http://localhost:46173")
+	}
+	result := make([]string, 0, 2)
+	for _, item := range strings.Split(value, ",") {
+		if origin := strings.TrimSpace(strings.TrimRight(item, "/")); origin != "" {
+			result = append(result, origin)
+		}
+	}
+	return result
 }

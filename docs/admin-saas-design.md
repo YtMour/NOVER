@@ -2,18 +2,18 @@
 
 ## 1. 当前边界
 
-截至 2026-11-10，NOVER 的用户端与运营端具有不同路由和 API 权限边界，但仍共享一个 React 构建产物：
+截至 2026-11-10，NOVER 的用户端与运营端已经拆成两个 React 工程和两个容器：
 
 | 层面 | 当前状态 | 结论 |
 | --- | --- | --- |
-| Web 路由 | 用户端 `/`，运营端默认 `/ops-7f3c` | 已分区，未拆成两个前端应用 |
+| Web 路由 | 用户端 `:45173/`，运营端默认 `:46173/ops-7f3c` | 独立 Origin 和独立应用壳层 |
 | API | 公开 API 与默认 `/api/v1/cp-7f3c` 运营 API | 已分权并使用独立认证中间件 |
-| 端口 | Web `45173`，API `48080` | 已支持跨 Origin 部署 |
-| 构建 | 一个 Vite 应用，运营页面按路由懒加载 | 运营代码仍存在于同一个静态产物 |
-| 账号 | 环境变量引导管理员 | 尚未形成数据库账号、邀请和 MFA |
-| 租户 | 一套部署服务一个运营主体 | 尚未提供同库多租户隔离 |
+| 端口 | 用户端 `45173`，控制台 `46173`，API `48080` | CORS 只允许显式 Origin 列表 |
+| 构建 | `web/` 与 `console/` 独立 Vite 构建、Dockerfile 和 Nginx 配置 | 用户端产物不包含运营页面和运营 API 客户端 |
+| 账号 | 数据库账号、bcrypt、角色权限、可撤销会话 | 邀请、MFA、密码重置待实现 |
+| 租户 | 已有默认租户和成员关系 | 业务表尚未强制 `tenant_id`，不开放多租户 |
 
-因此，“前后端分离”已经成立；“用户端与后台管理前端完全分离”尚未成立。目标架构会把两者拆成独立构建、独立域名和独立发布周期。
+前后端分离与两个前端的运行时隔离已经成立。当前剩余边界是生产独立域名、独立 CI/回滚，以及业务数据的强租户隔离；在这些工作完成前仍按单租户自托管部署。
 
 ## 2. 后台项目调研
 
@@ -42,19 +42,17 @@
 
 ## 3. 目标部署拓扑
 
-### 阶段 A：当前兼容模式
+### 当前本地与自托管模式
 
 ```text
-storefront + console React build :45173
-                    |
-                    +---- Go API :48080
-                              |
-                         PostgreSQL
+storefront React build :45173 ----+
+                                  +---- Go API :48080 ---- PostgreSQL
+console React build    :46173 ----+
 ```
 
-适合本地开发和单团队自托管。运营代码按路由懒加载，但仍属于同一个前端镜像。
+两个前端共享 API 和品牌方向，但不共享路由壳层、静态产物、镜像或主题存储。`web` 只连接公开接口；`console` 才包含运营登录与运营 API 客户端。该模式适合本地开发和单团队自托管。
 
-### 阶段 B：独立 Origin
+### 生产独立 Origin
 
 ```text
 store.example.com      -> storefront static build
@@ -63,15 +61,15 @@ api.example.com        -> Go API
 assets.example.com     -> private object delivery gateway
 ```
 
-要求：
+当前代码已满足前三项，生产部署仍需补齐独立 CI、域名和访问网关：
 
-- CORS 从单一字符串改为显式 Origin 列表；
+- CORS 使用显式 Origin 列表；
 - 控制台使用独立 CSP、登录限流和会话 Cookie/Token 策略；
 - 用户端构建不包含任何运营页面或运营 API 客户端；
 - 控制台域名可加 IP allowlist、SSO 或额外访问网关；
-- 两个前端独立 Dockerfile、CI 构建和回滚版本。
+- 两个前端具有独立 Dockerfile；CI 构建和回滚版本仍需落地。
 
-### 阶段 C：多租户 SaaS
+### 多租户 SaaS
 
 共享 API 与数据库，但所有租户数据必须有强制作用域。不能通过前端传入的 `tenant_id` 决定权限；租户只能来自已验证会话。
 
@@ -89,7 +87,7 @@ assets.example.com     -> private object delivery gateway
   -> ACTIVE
 ```
 
-本轮只实现到 `APPROVED / REJECTED`。申请表不收集密码；资格通过也不直接获得当前默认空间权限。这样可避免在租户隔离完成前产生跨商户数据访问。
+公开申请目前只实现到 `APPROVED / REJECTED`。申请表不收集密码；资格通过也不直接获得当前默认空间权限。现有数据库账号只来自部署时的引导管理员，等业务数据租户隔离与邀请流程完成后再开放新账号激活。
 
 后续邀请必须具备：
 
@@ -130,12 +128,18 @@ assets.example.com     -> private object delivery gateway
 
 ### 数据库改造
 
-新增核心表：
+身份基础表已经新增：
 
 ```text
 tenants
 operator_users
 tenant_memberships
+operator_sessions
+```
+
+身份后续仍需新增：
+
+```text
 operator_invitations
 role_permissions
 ```
@@ -175,13 +179,16 @@ download_tickets, download_events, admin_events
 
 ```env
 WEB_HOST_PORT=45173
+CONSOLE_HOST_PORT=46173
 API_HOST_PORT=48080
+STOREFRONT_URL=http://localhost:45173
+CONSOLE_URL=http://localhost:46173
 OPERATOR_WEB_PATH=/ops-7f3c
 OPERATOR_API_PATH=cp-7f3c
-ALLOWED_ORIGIN=http://localhost:45173
+ALLOWED_ORIGINS=http://localhost:45173,http://localhost:46173
 ```
 
-运营控制台“部署设置”保存目标拓扑和路由规划，并生成环境变量片段。真实路由由 Web 构建参数和 API 启动环境决定，需重新构建/重启后生效。
+运营控制台“部署设置”保存目标拓扑和路由规划，并生成环境变量片段。真实路由由 `web`/`console` 构建参数和 API 启动环境决定，需重新构建/重启后生效。
 
 选择这个边界的原因：
 
@@ -201,7 +208,7 @@ ALLOWED_ORIGIN=http://localhost:45173
   兑换码管理
 组织
   成员申请
-  成员与角色（下一阶段）
+  成员与权限
   邀请记录（下一阶段）
 系统
   部署设置
@@ -215,20 +222,21 @@ ALLOWED_ORIGIN=http://localhost:45173
 
 ### Phase 1：准入与控制面，当前阶段
 
-- 公开“加入我们”与账号登录入口；
+- 公开“加入我们”申请页与独立控制台外链；
 - 申请提交、限流、重复申请约束；
 - 后台申请审核；
 - 部署拓扑和自定义路由设置；
 - 运营侧栏与组织/系统分区；
 - Web/API 路由由环境变量配置。
 
-### Phase 2：身份与 RBAC
+### Phase 2：身份与 RBAC，进行中
 
-- 数据库账号、密码哈希、邀请设密；
-- 平台角色和租户角色；
-- 后端 permission middleware；
-- MFA、密码重置、会话撤销；
-- 成员与角色管理 UI。
+- [x] 数据库账号与 bcrypt 密码哈希；
+- [x] 平台角色、租户角色和成员关系；
+- [x] 后端 permission middleware；
+- [x] 当前会话服务端撤销；
+- [ ] 一次性邀请设密、MFA、密码重置和全设备会话管理；
+- [x] 成员与角色只读管理视图；
 
 ### Phase 3：强租户隔离
 
@@ -238,12 +246,14 @@ ALLOWED_ORIGIN=http://localhost:45173
 - 跨租户测试矩阵；
 - 申请通过后自动创建租户与 OWNER 邀请。
 
-### Phase 4：独立前端应用
+### Phase 4：独立前端应用，基础拆分已完成
 
-- `apps/storefront` 与 `apps/console`；
-- 共享 `packages/ui`、`packages/api-client`、`packages/contracts`；
-- 独立域名、CSP、CI、部署和回滚；
-- 控制台 SSO、MFA 与访问网关。
+- [x] `web/` 与 `console/` 独立工程、构建、镜像、端口和应用壳层；
+- [x] 用户端产物排除运营页面、登录逻辑和运营 API 客户端；
+- [x] 独立主题状态、CSP 和显式 CORS Origin；
+- [ ] 提取经过验证的 `packages/ui` 与 `packages/contracts`，避免重新耦合应用；
+- [ ] 生产独立域名、CI、部署和回滚演练；
+- [ ] 控制台 SSO、MFA 与访问网关。
 
 ### Phase 5：SaaS 运营
 

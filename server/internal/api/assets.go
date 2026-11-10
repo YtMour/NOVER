@@ -134,7 +134,7 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, action, resource_type, resource_id, metadata_json) VALUES ($1, 'ASSET_UPLOADED', 'asset', $2, jsonb_build_object('size_bytes', $3::bigint))`, eventID, item.ID, item.SizeBytes)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'ASSET_UPLOADED','asset',$3,jsonb_build_object('size_bytes',$4::bigint))`, eventID, operatorActor(r), item.ID, item.SizeBytes)
 		}
 	}
 	if err == nil {

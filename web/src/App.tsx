@@ -7,10 +7,8 @@ import { PageMotion } from './components/PageMotion'
 import { DeliveryPage } from './features/delivery/DeliveryPage'
 import { RedeemPage } from './features/redeem/RedeemPage'
 import { loadServiceHealth } from './lib/api'
-import { OPERATOR_PATH } from './lib/routes'
 
 type Theme = 'light' | 'dark'
-const AdminPage = lazy(() => import('./features/admin/AdminPage').then((module) => ({ default: module.AdminPage })))
 const ProductDetailPage = lazy(() => import('./features/redeem/ProductDetailPage').then((module) => ({ default: module.ProductDetailPage })))
 const JoinPage = lazy(() => import('./features/join/JoinPage').then((module) => ({ default: module.JoinPage })))
 
@@ -26,7 +24,6 @@ function Shell() {
   const health = useQuery({ queryKey: ['service-health'], queryFn: loadServiceHealth, refetchInterval: 30_000, retry: false })
   const deliveryToken = sessionStorage.getItem('nover.deliveryToken') ?? ''
   const currentPath = window.location.pathname
-  const operatorView = currentPath === OPERATOR_PATH
 
   useEffect(() => {
     if (deliveryToken && currentPath === '/') navigate('/delivery', { replace: true })
@@ -50,9 +47,8 @@ function Shell() {
         <NavLink to="/" className="brand-link" aria-label="NOVER 首页"><BrandMark /></NavLink>
         <nav className="top-navigation" aria-label="主导航">
           <NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? 'is-active' : ''}`}>交付门户</NavLink>
-          {operatorView && <span className="nav-link is-active">运营控制台</span>}
         </nav>
-        {!operatorView && <NavLink to="/join" className={({ isActive }) => `join-link ${isActive ? 'is-active' : ''}`}><UserPlus size={15} /><span>加入我们</span></NavLink>}
+        <NavLink to="/join" className={({ isActive }) => `join-link ${isActive ? 'is-active' : ''}`}><UserPlus size={15} /><span>加入我们</span></NavLink>
         <button
           className="theme-toggle"
           type="button"
@@ -71,7 +67,6 @@ function Shell() {
               <Route path="/delivery" element={<DeliveryPage token={deliveryToken} onLogout={logout} />} />
               <Route path="/products/:productID" element={<ProductDetailPage />} />
               <Route path="/join" element={<JoinPage />} />
-              <Route path={OPERATOR_PATH} element={<AdminPage />} />
               <Route path="*" element={<RedeemPage />} />
             </Routes>
           </Suspense>

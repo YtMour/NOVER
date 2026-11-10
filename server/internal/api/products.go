@@ -117,7 +117,7 @@ func (a *App) createProduct(w http.ResponseWriter, r *http.Request) {
 		eventID, err = randomID()
 		if err == nil {
 			action := "PRODUCT_DRAFT_CREATED"
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, action, resource_type, resource_id, metadata_json) VALUES ($1, $2, 'product', $3, jsonb_build_object('status', $4::text))`, eventID, action, item.ID, item.Status)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'product',$4,jsonb_build_object('status',$5::text))`, eventID, operatorActor(r), action, item.ID, item.Status)
 		}
 	}
 	if err == nil {
@@ -177,7 +177,7 @@ func (a *App) updateProduct(w http.ResponseWriter, r *http.Request) {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, action, resource_type, resource_id, metadata_json) VALUES ($1, 'PRODUCT_CONTENT_UPDATED', 'product', $2, jsonb_build_object('status', $3::text))`, eventID, item.ID, item.Status)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,'PRODUCT_CONTENT_UPDATED','product',$3,jsonb_build_object('status',$4::text))`, eventID, operatorActor(r), item.ID, item.Status)
 		}
 	}
 	if err == nil {
@@ -240,7 +240,7 @@ func (a *App) updateProductStatus(w http.ResponseWriter, r *http.Request) {
 		var eventID string
 		eventID, err = randomID()
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, action, resource_type, resource_id, metadata_json) VALUES ($1, $2, 'product', $3, jsonb_build_object('status', $4::text))`, eventID, action, item.ID, item.Status)
+			_, err = tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'product',$4,jsonb_build_object('status',$5::text))`, eventID, operatorActor(r), action, item.ID, item.Status)
 		}
 	}
 	if err == nil {

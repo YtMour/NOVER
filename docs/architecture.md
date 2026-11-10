@@ -7,10 +7,11 @@ MVP 采用模块化单体，避免把兑换、权益和下载拆成多个服务�
 ```text
 Browser
   │
-  ├── React + TypeScript + Tailwind + local/selected ReactBits components
-  │       └── anime.js / GSAP（表现层动效）
+  ├── Storefront React :45173（公开商品、兑换、交付、加入申请）
+  ├── Console React    :46173（运营登录与控制面）
+  │       └── TypeScript + Tailwind + anime.js / GSAP（表现层动效）
   │
-  └── HTTPS API
+  └── HTTPS API :48080
           │
           └── Go API
               ├── Operator Auth / Workspace
@@ -28,7 +29,7 @@ Browser
 
 ### 部署与租户模型
 
-当前 NOVER 是**单租户、自托管应用**：一次 Docker Compose 部署对应一个运营主体、一套品牌、一组运营账号和一套商品数据。它采用常见的 SaaS 技术基础，但现在不是多租户 SaaS，业务表也没有 `tenant_id`。公开加入申请和资格审核已实现，但资格通过不会直接生成可登录账号。账号邀请、RBAC 和强租户隔离的完整迁移见 [运营控制台与 SaaS 设计](admin-saas-design.md)。
+当前 NOVER 是**单租户、自托管应用**：一次 Docker Compose 部署对应一个运营主体、一套品牌和一套商品数据。数据库账号、租户成员关系、平台/租户角色、后端权限点和可撤销会话已实现；业务表仍没有 `tenant_id`，所以现在不是多租户 SaaS。公开加入申请和资格审核已实现，但资格通过不会直接生成可登录账号。邀请、MFA 和强租户隔离的完整迁移见 [运营控制台与 SaaS 设计](admin-saas-design.md)。
 
 如果后续提供平台托管版，需要先完成以下改造，而不是只增加一个“商户”表：
 
@@ -71,17 +72,21 @@ ReactBits 是可复制组件集合，不是本 MVP 使用的 npm 运行时依赖
 
 ## 3. 前端约定
 
-建议目录按业务能力组织，而不是按组件类型堆叠：
+两个前端独立组织。用户端构建不得引用控制台源文件或运营 API：
 
 ```text
 web/src/
-  App.tsx            路由与应用壳层
-  features/redeem/  兑换流程
-  features/delivery/交付空间和下载
-  features/admin/   运营控制台实现（非标入口为 /ops-7f3c）
-  components/       跨业务复用组件
-  lib/              API 客户端、格式化和校验
-  styles/           Tailwind 主题和全局样式
+  App.tsx             公开应用壳层
+  features/redeem/    兑换与商品详情
+  features/delivery/ 交付空间和下载
+  features/join/      运营账号申请与控制台外链
+  lib/api.ts          只包含公开 API
+
+console/src/
+  App.tsx             独立控制台壳层
+  features/admin/     非标入口 /ops-7f3c 下的运营工作区
+  lib/api.ts          运营登录、会话和受保护资源 API
+  lib/routes.ts       构建期运营 Web/API 路径
 ```
 
 约定：
@@ -121,6 +126,20 @@ server/
 ## 5. 当前数据库模型
 
 ```text
+tenants
+  id, name, slug, status, created_at, updated_at
+
+operator_users
+  id, username, display_name, password_hash, platform_role, status,
+  token_version, created_at, updated_at
+
+tenant_memberships
+  id, tenant_id, user_id, role, status, created_at, updated_at
+
+operator_sessions
+  id, user_id, membership_id, tenant_id, token_version, token_hash, expires_at,
+  revoked_at, created_at, last_seen_at
+
 products
   id, name, description, detail, status(DRAFT/ACTIVE/ARCHIVED), created_at
 
@@ -208,7 +227,7 @@ MVP 使用 `private-assets` Docker 卷保存文件，应用数据库只记录对
 
 ## 8. 安全边界
 
-- MVP 运营工作台使用账号密码换取 8 小时 HMAC 会话；开发默认 `admin/admin`，生产版本启动时拒绝默认凭证并需接入正式 MFA。
+- MVP 运营工作台使用 bcrypt 数据库密码换取 8 小时 HMAC 会话；服务端逐请求确认账号、成员关系、租户、角色和撤销状态。开发首次启动引导 `admin/admin`，生产版本拒绝默认凭证并需接入正式 MFA。
 - 管理后台与公开兑换 API 使用不同权限中间件。
 - 兑换码只保存 HMAC/哈希；密钥从环境变量或密钥管理系统注入。
 - MVP 记录商品创建、文件上传、兑换码签发、凭证状态变更和下载开始事件；退款联动与审计检索仍待实现。
@@ -222,12 +241,13 @@ MVP 使用 `private-assets` Docker 卷保存文件，应用数据库只记录对
 当前 Compose 服务：
 
 ```text
-web       React 静态资源或前端容器
-api       Go API
-db        PostgreSQL
+web       用户端 React 静态资源，默认 :45173
+console   运营端 React 静态资源，默认 :46173
+api       Go API，默认 :48080
+db        PostgreSQL，默认仅回环 :5433
 ```
 
-`web` 容器内含 Nginx 静态服务和 `/api` 反向代理；Compose 当前仅绑定到 loopback，不包含公网 TLS 终止。
+`web` 与 `console` 各自包含 Nginx 静态服务和 `/api` 反向代理。两个静态镜像独立构建；用户端镜像不包含运营页面。Compose 当前仅绑定到 loopback，不包含公网 TLS 终止。
 
 MVP 使用 `private-assets` Docker 卷，适合单实例功能验证。后续可增加 Redis 和 S3/MinIO profile；所有对象数据始终保持在 Git 之外。
 

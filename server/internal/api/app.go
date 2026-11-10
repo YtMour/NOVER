@@ -42,22 +42,24 @@ func (a *App) Handler() http.Handler {
 		r.Route(operatorPath, func(r chi.Router) {
 			r.Use(a.requireOperator)
 			r.Get("/session", a.operatorSession)
-			r.Get("/applications", a.listJoinApplications)
-			r.Post("/applications/{applicationID}/review", a.reviewJoinApplication)
-			r.Get("/settings", a.getPlatformSettings)
-			r.Put("/settings", a.updatePlatformSettings)
-			r.Get("/products", a.listProducts)
-			r.Get("/activity", a.adminActivity)
-			r.Post("/products", a.createProduct)
-			r.Put("/products/{productID}", a.updateProduct)
-			r.Post("/products/{productID}/status", a.updateProductStatus)
-			r.Post("/products/{productID}/assets", a.uploadAsset)
-			r.Get("/products/{productID}/images", a.listProductImages)
-			r.Post("/products/{productID}/images", a.uploadProductImage)
-			r.Get("/products/{productID}/images/{imageID}", a.serveOperatorProductImage)
-			r.Delete("/products/{productID}/images/{imageID}", a.deleteProductImage)
-			r.Post("/products/{productID}/codes", a.createCodes)
-			r.Post("/codes/{codeID}/action", a.updateCodeAction)
+			r.Post("/session/revoke", a.revokeOperatorSession)
+			r.With(a.requirePermission(permissionApplicationRead)).Get("/applications", a.listJoinApplications)
+			r.With(a.requirePermission(permissionApplicationReview)).Post("/applications/{applicationID}/review", a.reviewJoinApplication)
+			r.With(a.requirePermission(permissionSettingsRead)).Get("/settings", a.getPlatformSettings)
+			r.With(a.requirePermission(permissionSettingsManage)).Put("/settings", a.updatePlatformSettings)
+			r.With(a.requirePermission(permissionMemberRead)).Get("/members", a.listTenantMembers)
+			r.With(a.requirePermission(permissionProductRead)).Get("/products", a.listProducts)
+			r.With(a.requirePermission(permissionActivityRead)).Get("/activity", a.adminActivity)
+			r.With(a.requirePermission(permissionProductWrite)).Post("/products", a.createProduct)
+			r.With(a.requirePermission(permissionProductWrite)).Put("/products/{productID}", a.updateProduct)
+			r.With(a.requirePermission(permissionProductPublish)).Post("/products/{productID}/status", a.updateProductStatus)
+			r.With(a.requirePermission(permissionFulfillmentWrite)).Post("/products/{productID}/assets", a.uploadAsset)
+			r.With(a.requirePermission(permissionProductRead)).Get("/products/{productID}/images", a.listProductImages)
+			r.With(a.requirePermission(permissionProductWrite)).Post("/products/{productID}/images", a.uploadProductImage)
+			r.With(a.requirePermission(permissionProductRead)).Get("/products/{productID}/images/{imageID}", a.serveOperatorProductImage)
+			r.With(a.requirePermission(permissionProductWrite)).Delete("/products/{productID}/images/{imageID}", a.deleteProductImage)
+			r.With(a.requirePermission(permissionCodeIssue)).Post("/products/{productID}/codes", a.createCodes)
+			r.With(a.requirePermission(permissionCodeManage)).Post("/codes/{codeID}/action", a.updateCodeAction)
 		})
 	})
 	return r
@@ -71,7 +73,7 @@ func (a *App) cors(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'")
 		origin := r.Header.Get("Origin")
-		if origin != "" && origin == a.cfg.AllowedOrigin {
+		if origin != "" && allowedOrigin(a.cfg.AllowedOrigins, origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
@@ -83,4 +85,13 @@ func (a *App) cors(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func allowedOrigin(allowed []string, origin string) bool {
+	for _, candidate := range allowed {
+		if origin == candidate {
+			return true
+		}
+	}
+	return false
 }

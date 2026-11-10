@@ -12,6 +12,7 @@ import (
 
 type activityItem struct {
 	CodeID           string     `json:"code_id"`
+	ProductID        string     `json:"product_id"`
 	ProductName      string     `json:"product_name"`
 	CodeSuffix       string     `json:"code_suffix"`
 	CodeStatus       string     `json:"code_status"`
@@ -23,9 +24,23 @@ type activityItem struct {
 	DownloadEvents   int        `json:"download_events"`
 }
 
+type activityProductSummary struct {
+	ProductID      string `json:"product_id"`
+	Codes          int    `json:"codes"`
+	Redeemed       int    `json:"redeemed"`
+	DownloadEvents int    `json:"download_events"`
+}
+
+type activitySummary struct {
+	TotalCodes     int                      `json:"total_codes"`
+	RedeemedCodes  int                      `json:"redeemed_codes"`
+	DownloadEvents int                      `json:"download_events"`
+	Products       []activityProductSummary `json:"products"`
+}
+
 func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.db.Query(r.Context(), `
-		SELECT rc.id, p.name, rc.display_suffix, rc.status, rc.external_order_ref,
+		SELECT rc.id, p.id, p.name, rc.display_suffix, rc.status, rc.external_order_ref,
 		       rc.expires_at, rc.redeemed_at, e.valid_until,
 		       COALESCE(e.downloads_issued, 0),
 	       COALESCE((SELECT COUNT(*) FROM download_events de WHERE de.entitlement_id=e.id), 0)
@@ -43,7 +58,7 @@ func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
 	items := make([]activityItem, 0)
 	for rows.Next() {
 		var item activityItem
-		if err := rows.Scan(&item.CodeID, &item.ProductName, &item.CodeSuffix, &item.CodeStatus, &item.ExternalOrderRef, &item.CodeExpiresAt, &item.RedeemedAt, &item.EntitlementUntil, &item.DownloadsIssued, &item.DownloadEvents); err != nil {
+		if err := rows.Scan(&item.CodeID, &item.ProductID, &item.ProductName, &item.CodeSuffix, &item.CodeStatus, &item.ExternalOrderRef, &item.CodeExpiresAt, &item.RedeemedAt, &item.EntitlementUntil, &item.DownloadsIssued, &item.DownloadEvents); err != nil {
 			a.logError(r, "scan admin activity failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "Activity could not be loaded.")
 			return
@@ -55,7 +70,40 @@ func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Activity could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+
+	summaryRows, err := a.db.Query(r.Context(), `
+		SELECT rc.product_id,
+		       COUNT(*),
+		       COUNT(*) FILTER (WHERE rc.status='REDEEMED'),
+		       COALESCE(SUM((SELECT COUNT(*) FROM download_events de WHERE de.entitlement_id=e.id)), 0)
+		FROM redeem_codes rc
+		LEFT JOIN entitlements e ON e.id=rc.entitlement_id
+		GROUP BY rc.product_id`)
+	if err != nil {
+		a.logError(r, "load activity summary failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Activity summary could not be loaded.")
+		return
+	}
+	defer summaryRows.Close()
+	summary := activitySummary{Products: make([]activityProductSummary, 0)}
+	for summaryRows.Next() {
+		var item activityProductSummary
+		if err := summaryRows.Scan(&item.ProductID, &item.Codes, &item.Redeemed, &item.DownloadEvents); err != nil {
+			a.logError(r, "scan activity summary failed", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "Activity summary could not be loaded.")
+			return
+		}
+		summary.TotalCodes += item.Codes
+		summary.RedeemedCodes += item.Redeemed
+		summary.DownloadEvents += item.DownloadEvents
+		summary.Products = append(summary.Products, item)
+	}
+	if err := summaryRows.Err(); err != nil {
+		a.logError(r, "iterate activity summary failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Activity summary could not be loaded.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "summary": summary})
 }
 
 func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +196,7 @@ func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, action, resource_type, resource_id, metadata_json) VALUES ($1, $2, 'redeem_code', $3, jsonb_build_object('status', $4::text))`, eventID, input.Action, chi.URLParam(r, "codeID"), nextCodeStatus); err != nil {
+	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,'redeem_code',$4,jsonb_build_object('status',$5::text))`, eventID, operatorActor(r), input.Action, chi.URLParam(r, "codeID"), nextCodeStatus); err != nil {
 		a.logError(r, "record code action failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 		return

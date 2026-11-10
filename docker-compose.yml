@@ -33,8 +33,9 @@ services:
       ACCESS_TOKEN_KEY: ${ACCESS_TOKEN_KEY:?Set ACCESS_TOKEN_KEY in .env}
       STORAGE_DIR: /var/lib/nover/files
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-524288000}
-      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:45173}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:45173,http://localhost:46173}
       OPERATOR_API_PATH: ${OPERATOR_API_PATH:-cp-7f3c}
+      DEFAULT_TENANT_NAME: ${DEFAULT_TENANT_NAME:-知屿默认空间}
     volumes:
       - private-assets:/var/lib/nover/files
     ports:
@@ -49,13 +50,27 @@ services:
     build:
       context: ./web
       args:
-        VITE_OPERATOR_PATH: ${OPERATOR_WEB_PATH:-/ops-7f3c}
-        VITE_OPERATOR_API_PATH: ${OPERATOR_API_PATH:-cp-7f3c}
+        VITE_CONSOLE_URL: ${CONSOLE_URL:-http://localhost:46173}${OPERATOR_WEB_PATH:-/ops-7f3c}
     restart: unless-stopped
     depends_on:
       - api
     ports:
       - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_HOST_PORT:-45173}:80"
+    networks:
+      - private
+
+  console:
+    build:
+      context: ./console
+      args:
+        VITE_OPERATOR_PATH: ${OPERATOR_WEB_PATH:-/ops-7f3c}
+        VITE_OPERATOR_API_PATH: ${OPERATOR_API_PATH:-cp-7f3c}
+        VITE_API_PORT: ${API_HOST_PORT:-48080}
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${CONSOLE_BIND_ADDRESS:-127.0.0.1}:${CONSOLE_HOST_PORT:-46173}:80"
     networks:
       - private
 

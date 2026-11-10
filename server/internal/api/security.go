@@ -6,8 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
-	"fmt"
-	"strconv"
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -71,41 +70,52 @@ func newOpaqueToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func newOperatorToken(secret []byte, username string, ttl time.Duration) (string, time.Time, error) {
+type operatorTokenClaims struct {
+	Version   int    `json:"v"`
+	SessionID string `json:"sid"`
+	UserID    string `json:"uid"`
+	ExpiresAt int64  `json:"exp"`
+	Nonce     string `json:"nonce"`
+}
+
+func newOperatorToken(secret []byte, sessionID, userID string, ttl time.Duration) (string, time.Time, error) {
 	nonce, err := newOpaqueToken()
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	expiresAt := time.Now().Add(ttl).UTC()
-	payload := fmt.Sprintf("v1|%s|%d|%s", username, expiresAt.Unix(), nonce)
+	payload, err := json.Marshal(operatorTokenClaims{Version: 2, SessionID: sessionID, UserID: userID, ExpiresAt: expiresAt.Unix(), Nonce: nonce})
+	if err != nil {
+		return "", time.Time{}, err
+	}
 	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write([]byte(payload))
 	token := base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return token, expiresAt, nil
 }
 
-func verifyOperatorToken(secret []byte, token, expectedUsername string) bool {
+func verifyOperatorToken(secret []byte, token string) (operatorTokenClaims, bool) {
+	var claims operatorTokenClaims
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
-		return false
+		return claims, false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return false
+		return claims, false
 	}
 	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return false
+		return claims, false
 	}
 	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write(payload)
 	if !hmac.Equal(signature, mac.Sum(nil)) {
-		return false
+		return claims, false
 	}
-	fields := strings.Split(string(payload), "|")
-	if len(fields) != 4 || fields[0] != "v1" || fields[1] != expectedUsername {
-		return false
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return claims, false
 	}
-	expiresUnix, err := strconv.ParseInt(fields[2], 10, 64)
-	return err == nil && time.Now().Before(time.Unix(expiresUnix, 0))
+	valid := claims.Version == 2 && claims.SessionID != "" && claims.UserID != "" && claims.Nonce != "" && time.Now().Before(time.Unix(claims.ExpiresAt, 0))
+	return claims, valid
 }
