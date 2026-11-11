@@ -31,8 +31,8 @@ export function loadServiceHealth() {
   return request<{ status: 'ready' }>('/readyz')
 }
 
-export function loadPublicProducts() {
-  return request<ProductList>('/api/v1/products')
+export function loadPublicProducts(spaceSlug?: string) {
+  return request<ProductList>(spaceSlug ? `/api/v1/spaces/${encodeURIComponent(spaceSlug)}/products` : '/api/v1/products')
 }
 
 export function submitJoinApplication(input: { organization_name: string; contact_name: string; email: string; desired_username: string; expected_password: string; use_case: string }) {

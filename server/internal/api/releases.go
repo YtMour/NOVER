@@ -190,6 +190,12 @@ func (a *App) updateProductReleaseStatus(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The product release could not be updated.")
 		return
 	}
+	// A repeated status request must not move the publication boundary used by
+	// existing buyers' update entitlements.
+	if item.Status == input.Status {
+		writeJSON(w, http.StatusOK, item)
+		return
+	}
 	if input.Status == "PUBLISHED" {
 		var assetCount int
 		var productStatus string
@@ -219,7 +225,7 @@ func (a *App) updateProductReleaseStatus(w http.ResponseWriter, r *http.Request)
 	}
 	var publishedAt *time.Time
 	if input.Status == "PUBLISHED" {
-		now := time.Now()
+		now := time.Now().UTC()
 		publishedAt = &now
 	}
 	err = tx.QueryRow(r.Context(), `UPDATE product_releases SET status=$4, published_at=$5, updated_at=NOW() WHERE id=$1 AND product_id=$2 AND tenant_id=$3 RETURNING status, published_at, updated_at`, releaseID, productID, identity.TenantID, input.Status, publishedAt).Scan(&item.Status, &item.PublishedAt, &item.UpdatedAt)

@@ -40,20 +40,30 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	productID := chi.URLParam(r, "productID")
-	var productExists bool
-	if err := a.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM products WHERE id=$1 AND tenant_id=$2 AND status='ACTIVE')`, productID, requestTenantID(r)).Scan(&productExists); err != nil {
+	tx, err := a.db.Begin(r.Context())
+	if err != nil {
+		a.logError(r, "begin code transaction failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var productStatus string
+	if err := tx.QueryRow(r.Context(), `SELECT status FROM products WHERE id=$1 AND tenant_id=$2 FOR SHARE`, productID, requestTenantID(r)).Scan(&productStatus); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
+		return
+	} else if err != nil {
 		a.logError(r, "check product for codes failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
 	}
-	if !productExists {
+	if productStatus != "ACTIVE" {
 		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 		return
 	}
 	input.ReleaseID = strings.TrimSpace(input.ReleaseID)
 	var releaseVersion string
 	if input.ReleaseID == "" {
-		err := a.db.QueryRow(r.Context(), `SELECT id, version FROM product_releases WHERE product_id=$1 AND tenant_id=$2 AND status='PUBLISHED' ORDER BY published_at DESC NULLS LAST, created_at DESC LIMIT 1`, productID, requestTenantID(r)).Scan(&input.ReleaseID, &releaseVersion)
+		err := tx.QueryRow(r.Context(), `SELECT id, version FROM product_releases WHERE product_id=$1 AND tenant_id=$2 AND status='PUBLISHED' ORDER BY published_at DESC NULLS LAST, created_at DESC LIMIT 1 FOR SHARE`, productID, requestTenantID(r)).Scan(&input.ReleaseID, &releaseVersion)
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusConflict, "published_release_required", "Publish a product release before issuing redemption codes.")
 			return
@@ -63,7 +73,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 			return
 		}
-	} else if err := a.db.QueryRow(r.Context(), `SELECT version FROM product_releases WHERE id=$1 AND product_id=$2 AND tenant_id=$3 AND status='PUBLISHED'`, input.ReleaseID, productID, requestTenantID(r)).Scan(&releaseVersion); errors.Is(err, pgx.ErrNoRows) {
+	} else if err := tx.QueryRow(r.Context(), `SELECT version FROM product_releases WHERE id=$1 AND product_id=$2 AND tenant_id=$3 AND status='PUBLISHED' FOR SHARE`, input.ReleaseID, productID, requestTenantID(r)).Scan(&releaseVersion); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, "published_release_required", "Choose a published release for this product.")
 		return
 	} else if err != nil {
@@ -71,13 +81,6 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
 	}
-	tx, err := a.db.Begin(r.Context())
-	if err != nil {
-		a.logError(r, "begin code transaction failed", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
-		return
-	}
-	defer tx.Rollback(r.Context())
 	issued := make([]string, 0, input.Count)
 	expires := time.Now().AddDate(0, 0, input.CodeTTLDays)
 	for i := 0; i < input.Count; i++ {

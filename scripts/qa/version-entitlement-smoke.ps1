@@ -51,6 +51,8 @@ try {
 
   $product = Api POST "/api/v1/$operatorPath/products/$productId/status" @{ status = 'ACTIVE' } $headers
   $release100 = Api POST "/api/v1/$operatorPath/products/$productId/releases/$($release100.id)/status" @{ status = 'PUBLISHED' } $headers
+  $publishedAt = $release100.published_at
+  $release100Again = Api POST "/api/v1/$operatorPath/products/$productId/releases/$($release100.id)/status" @{ status = 'PUBLISHED' } $headers
   $issued = Api POST "/api/v1/$operatorPath/products/$productId/codes" @{ count = 1; code_ttl_days = 7; access_days = 30; max_downloads = 10; external_order_ref = "acceptance-$stamp"; release_id = $release100.id } $headers
   $redeem = Api POST '/api/v1/redeem' @{ code = $issued.codes[0] }
   $buyerHeaders = @{ Authorization = "Bearer $($redeem.access_token)" }
@@ -82,6 +84,16 @@ try {
   } catch {
     $draftTicketCode = if ($_.ErrorDetails.Message) { (($_.ErrorDetails.Message | ConvertFrom-Json).code) } else { 'http_error' }
   }
+  $filesBeforeDelete = Api GET "/api/v1/$operatorPath/products/$productId/assets" $null $headers
+  $publishedDeleteCode = ''
+  try {
+    Invoke-RestMethod -Method Delete -Uri "$base/api/v1/$operatorPath/products/$productId/assets/$($asset100.id)" -Headers $headers | Out-Null
+    $publishedDeleteCode = 'unexpected_success'
+  } catch {
+    $publishedDeleteCode = if ($_.ErrorDetails.Message) { (($_.ErrorDetails.Message | ConvertFrom-Json).code) } else { 'http_error' }
+  }
+  Invoke-RestMethod -Method Delete -Uri "$base/api/v1/$operatorPath/products/$productId/assets/$($asset200.id)" -Headers $headers | Out-Null
+  $filesAfterDelete = Api GET "/api/v1/$operatorPath/products/$productId/assets" $null $headers
 
   $summary.product_status = $product.status
   $summary.base_release = $delivery100.base_version
@@ -93,6 +105,10 @@ try {
   $summary.base_withdraw_result = $withdrawCode
   $summary.update_ticket_created = [bool]$ticket.url
   $summary.draft_ticket_result = $draftTicketCode
+  $summary.repeat_publish_kept_timestamp = $publishedAt -eq $release100Again.published_at
+  $summary.asset_list_count = @($filesBeforeDelete.items).Count
+  $summary.published_file_delete_result = $publishedDeleteCode
+  $summary.draft_file_deleted = -not (@($filesAfterDelete.items.id) -contains $asset200.id)
   $summary.pass = (
     $summary.health -eq 'ready' -and
     $summary.base_release -eq '1.0.0' -and
@@ -102,7 +118,11 @@ try {
     $summary.draft_hidden -and
     $withdrawCode -eq 'release_in_use' -and
     $summary.update_ticket_created -and
-    $draftTicketCode -eq 'asset_not_found'
+    $draftTicketCode -eq 'asset_not_found' -and
+    $summary.repeat_publish_kept_timestamp -and
+    $summary.asset_list_count -eq 3 -and
+    $publishedDeleteCode -eq 'asset_immutable' -and
+    $summary.draft_file_deleted
   )
   if ($KeepFixture) {
     $summary.fixture = [ordered]@{

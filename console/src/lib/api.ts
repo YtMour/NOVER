@@ -157,6 +157,14 @@ export function uploadAsset(token: string, productId: string, releaseId: string,
   })
 }
 
+export function loadProductAssets(token: string, productId: string) {
+  return request<{ items: Asset[] }>(operatorEndpoint(`/products/${productId}/assets`), { headers: withBearer(token) })
+}
+
+export function deleteDraftAsset(token: string, productId: string, assetId: string) {
+  return request<void>(operatorEndpoint(`/products/${productId}/assets/${assetId}`), { method: 'DELETE', headers: withBearer(token) })
+}
+
 export function loadProductImages(token: string, productId: string) {
   return request<{ items: ProductImage[] }>(operatorEndpoint(`/products/${productId}/images`), { headers: withBearer(token) })
 }

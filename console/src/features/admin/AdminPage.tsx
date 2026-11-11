@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent } from 'react'
 import { Archive, Ban, BarChart3, Building2, Check, Copy, Eye, FileUp, GitBranch, ImagePlus, KeyRound, LayoutDashboard, LockKeyhole, PackagePlus, Pause, Plus, RefreshCw, RotateCcw, Save, Send, ServerCog, Settings2, ShieldCheck, TicketCheck, Trash2, UserCheck, UsersRound, X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createProduct, createProductRelease, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductImageBlob, loadProductImages, loadProductReleases, loadProducts, loadTenantMembers, operatorLogin, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductReleaseStatus, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
+import { createProduct, createProductRelease, deleteDraftAsset, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductAssets, loadProductImageBlob, loadProductImages, loadProductReleases, loadProducts, loadTenantMembers, operatorLogin, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductReleaseStatus, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
 import { StatusMessage } from '../../components/StatusMessage'
 import { ProductDetailView } from '../redeem/ProductDetailView'
 import type { AdminActivity, AdminActivitySummary, JoinApplication, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductRelease, TenantMember } from '../../types'
@@ -152,7 +152,7 @@ export function AdminPage() {
       {view === 'products' && <><section className="product-studio">
         <div className="product-studio-heading">
           <div className="admin-section-heading"><div className="tool-icon tool-icon--green"><PackagePlus size={18} /></div><div><span className="section-kicker">STEP 01 · CONTENT</span><h2>商品内容与实时预览</h2></div></div>
-          <div className="studio-model-note"><span className="tiny-status-dot" />当前为单租户部署</div>
+          <a className="studio-model-note" href={`${import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:45173'}/spaces/${session.data?.tenant_slug}`} target="_blank" rel="noreferrer"><span className="tiny-status-dot" />打开当前空间的公开商品页 ↗</a>
         </div>
         <div className="product-studio-layout">
           <aside className="product-studio-sidebar">
@@ -540,15 +540,18 @@ function AssetUpload({ token, productId, enabled, onUploaded, onError }: { token
   const [releaseId, setReleaseId] = useState('')
   const queryClient = useQueryClient()
   const releases = useQuery({ queryKey: ['product-releases', token, productId], queryFn: () => loadProductReleases(token, productId), enabled: Boolean(productId), retry: false })
+  const assets = useQuery({ queryKey: ['product-assets', token, productId], queryFn: () => loadProductAssets(token, productId), enabled: Boolean(productId), retry: false })
   const draftReleases = useMemo(() => (releases.data?.items ?? []).filter((item) => item.status === 'DRAFT'), [releases.data?.items])
   useEffect(() => { setReleaseId(''); setFile(null) }, [productId])
   useEffect(() => {
     const nextReleaseId = draftReleases.some((item) => item.id === releaseId) ? releaseId : (draftReleases[0]?.id ?? '')
     if (nextReleaseId !== releaseId) setReleaseId(nextReleaseId)
   }, [draftReleases, releaseId])
-  const mutation = useMutation({ mutationFn: () => uploadAsset(token, productId, releaseId, file!), onSuccess: async () => { setFile(null); await queryClient.invalidateQueries({ queryKey: ['product-releases', token, productId] }); await onUploaded() }, onError })
+  const refreshAssets = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey: ['product-releases', token, productId] }), queryClient.invalidateQueries({ queryKey: ['product-assets', token, productId] })]); await onUploaded() }
+  const mutation = useMutation({ mutationFn: () => uploadAsset(token, productId, releaseId, file!), onSuccess: async () => { setFile(null); await refreshAssets() }, onError })
+  const deleteMutation = useMutation({ mutationFn: (assetId: string) => deleteDraftAsset(token, productId, assetId), onSuccess: refreshAssets, onError })
   return (
-    <form className="stack-form compact-form" onSubmit={(event) => { event.preventDefault(); if (file) mutation.mutate() }}>
+    <div className="asset-management"><form className="stack-form compact-form" onSubmit={(event) => { event.preventDefault(); if (file) mutation.mutate() }}>
       <label htmlFor="asset-release">绑定版本</label>
       <select id="asset-release" value={releaseId} onChange={(event) => setReleaseId(event.target.value)} disabled={!draftReleases.length || !enabled}><option value="">选择版本草稿</option>{draftReleases.map((release) => <option value={release.id} key={release.id}>{release.version} · {release.asset_count} 个文件</option>)}</select>
       <label htmlFor="asset-file">选择交付文件</label>
@@ -556,7 +559,11 @@ function AssetUpload({ token, productId, enabled, onUploaded, onError }: { token
       <p className="field-note">文件必须绑定版本草稿；发布版本后，该版本及后续更新将按买家权益范围展示。</p>
       {productId && !draftReleases.length && <StatusMessage kind="info">先在版本管理中创建版本草稿，再上传交付文件。</StatusMessage>}
       <button className="button button-secondary" type="submit" disabled={!file || !productId || !releaseId || !enabled || mutation.isPending}><FileUp size={16} />{mutation.isPending ? '上传中…' : '上传到所选版本'}</button>
-    </form>
+    </form><div className="asset-list-header"><strong>已上传文件</strong><span>{assets.data?.items.length ?? 0} 个</span></div>
+    {assets.isLoading ? <p className="field-note">正在读取文件…</p> : assets.isError ? <StatusMessage>{assets.error.message}</StatusMessage> : assets.data?.items.length ? <div className="asset-list">{assets.data.items.map((item) => {
+      const status = releases.data?.items.find((release) => release.id === item.release_id)?.status
+      return <div className="asset-list-row" key={item.id}><div><strong title={item.file_name}>{item.file_name}</strong><span>{item.release_version || '历史交付'} · {(item.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {item.sha256.slice(0, 12)}…</span></div>{status === 'DRAFT' ? <button className="icon-button icon-button--small icon-button--danger" type="button" title="删除草稿文件" aria-label={`删除草稿文件 ${item.file_name}`} disabled={deleteMutation.isPending} onClick={() => { if (window.confirm(`删除草稿文件「${item.file_name}」？`)) deleteMutation.mutate(item.id) }}><Trash2 size={15} /></button> : <span className="asset-locked-label"><LockKeyhole size={13} />{status === 'PUBLISHED' ? '已发布' : '只读'}</span>}</div>
+    })}</div> : <p className="field-note">当前商品尚未上传交付文件。</p>}</div>
   )
 }
 
@@ -573,7 +580,7 @@ function ProductPublishControl({ token, product, onPublished, onError }: { token
         <span className={hasDelivery ? 'is-ready' : ''}><Check size={15} />交付文件 <small>必需</small></span>
       </div>
       <div className="publish-product-action">
-        <div><strong>{published ? '商品已在公开目录展示' : '完成前三步后发布商品'}</strong><span>{!product ? '先创建并保存商品草稿。' : !hasDelivery ? '上传至少一个交付文件后才可发布。' : '发布后即可为该商品签发兑换码。'}</span></div>
+        <div><strong>{published ? '商品已在公开目录展示' : '完成前三步后发布商品'}</strong><span>{!product ? '先创建并保存商品草稿。' : published && !hasDelivery ? '该商品为历史公开示例；请创建版本草稿并上传交付文件。' : published ? '商品已展示；发布版本后即可签发与版本绑定的兑换码。' : !hasDelivery ? '上传至少一个交付文件后才可发布。' : '发布后即可为该商品签发兑换码。'}</span></div>
         <button className="button button-primary" type="button" disabled={!product || !hasContent || !hasDelivery || published || mutation.isPending} onClick={() => mutation.mutate()}><Send size={16} />{mutation.isPending ? '发布中…' : published ? '已发布' : product?.status === 'ARCHIVED' ? '恢复并发布' : '完成并发布'}</button>
       </div>
     </div>

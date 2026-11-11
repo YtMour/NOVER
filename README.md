@@ -23,7 +23,7 @@ NOVER 不是传统的多商户商城，而是“外部平台成交 + NOVER 数�
 
 第一阶段只解决可靠交付，不内置站内支付、购物车、多商户分账和复杂营销系统。
 
-当前部署模型仍是**单租户、自托管**：一套部署服务一个卖家或团队。数据库身份、租户成员关系、平台/租户角色、权限中间件和可撤销会话已经建立；商品、效果图、交付资产、兑换码、权益、下载票据、下载事件和审计记录已完成默认租户回填、API 查询作用域以及核心关系复合外键。公开申请会创建独立的待审租户和只读账号：申请人可登录查看账号与申请状态，但只有管理员通过后才获得商品、文件和兑换码权限。RLS、租户域名、邀请设密和 MFA 尚未完成，因此当前实例仍不是可直接开放多商户入驻的平台。
+当前以**单实例、自托管**部署为主，并已形成基础多租户交付闭环。数据库身份、租户成员关系、平台/租户角色、权限中间件和可撤销会话已经建立；商品、效果图、交付资产、兑换码、权益、下载票据、下载事件和审计记录具有租户作用域。公开申请会创建独立的待审租户和只读账号：申请人可登录查看账号与申请状态，管理员通过后才获得商品、文件和兑换码权限。兑换码和访问令牌由服务端定位租户；商户商品目录可通过 `/spaces/{tenant_slug}` 展示。RLS、租户域名、邀请设密、MFA、配额与账单尚未完成，当前不应视为生产级 SaaS。
 
 ## 开源边界
 
@@ -68,6 +68,7 @@ ReactBits 是可复制组件参考集合，不是本项目依赖的运行时包�
 - [迭代路线](docs/roadmap.md)：从空仓库到可运营版本的阶段计划
 - [运营控制台与 SaaS 设计](docs/admin-saas-design.md)：前后台拆分、账号准入、RBAC、租户隔离和部署配置
 - [前后台拆分验收](docs/audit-split.md)：本地容器、浏览器流程、响应式和构建边界证据
+- [2026-11-11 阶段审计](docs/audit-2026-11-11.md)：租户交付、文件管理、页面测试与剩余风险
 
 ## 当前状态
 
@@ -82,7 +83,7 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-打开用户端 [http://localhost:45173](http://localhost:45173)，或打开独立运营控制台 [http://localhost:46173/ops-7f3c](http://localhost:46173/ops-7f3c)。开发环境账号密码均为 `admin`。Go API 独立暴露在 `http://localhost:48080`。用户端访问 `/ops-7f3c` 只会回到公开商品页面，不包含控制台页面或运营 API 客户端。售卖文件保存在 Docker 私有卷 `private-assets`，数据库保存在 `postgres-data`。
+打开用户端 [http://localhost:45173](http://localhost:45173)，或打开独立运营控制台 [http://localhost:46173/ops-7f3c](http://localhost:46173/ops-7f3c)。已通过审核的商户可在商品创建页打开自己的 `/spaces/{tenant_slug}` 公开入口。开发环境账号密码均为 `admin`。Go API 独立暴露在 `http://localhost:48080`。用户端访问 `/ops-7f3c` 只会回到公开商品页面，不包含控制台页面或运营 API 客户端。售卖文件保存在 Docker 私有卷 `private-assets`，数据库保存在 `postgres-data`。
 
 本地开发前端和 API 时，先启动数据库：
 
@@ -119,9 +120,10 @@ npm run dev
 
 ```powershell
 & .\scripts\qa\version-entitlement-smoke.ps1
+& .\scripts\qa\tenant-delivery-smoke.ps1
 ```
 
-脚本会创建临时商品、`1.0.0`/`1.1.0` 发布版本和 `2.0.0` 草稿版本，验证兑换、更新可见性、草稿隔离、下载票据与版本撤回保护，并在结束时清理数据库记录和测试文件。
+首个脚本验证版本发布幂等、文件列表、草稿文件删除、已发布文件保护、兑换与更新权益。第二个脚本验证申请待审只读、审核激活、商户商品目录、跨租户不可见和商户兑换交付。两者结束后清理测试记录与文件。
 
 ## API 入口
 
@@ -130,6 +132,7 @@ npm run dev
 | `GET` | `/healthz` | 进程存活检查 |
 | `GET` | `/readyz` | 数据库就绪检查 |
 | `GET` | `/api/v1/products` | 首页和商品详情页使用的公开商品目录 |
+| `GET` | `/api/v1/spaces/{slug}/products` | 指定商户的公开商品目录；图片路由同样带空间前缀 |
 | `POST` | `/api/v1/join-applications` | 提交组织与运营账号申请 |
 | `POST` | `/api/v1/cp-7f3c/login` | 运营账号密码登录，签发短期会话 |
 | `GET/POST` | `/api/v1/cp-7f3c/session[...]` | 读取当前身份或撤销当前会话 |
@@ -145,6 +148,7 @@ npm run dev
 | `GET/POST` | `/api/v1/cp-7f3c/products/{id}/releases` | 查看和创建商品版本草稿 |
 | `POST` | `/api/v1/cp-7f3c/products/{id}/releases/{releaseID}/status` | 发布、撤回或归档商品版本 |
 | `POST` | `/api/v1/cp-7f3c/products/{id}/assets` | 上传并绑定版本草稿的单个交付文件，表单包含 `release_id` |
+| `GET/DELETE` | `/api/v1/cp-7f3c/products/{id}/assets[...]` | 查看文件清单；仅草稿版本文件可删除 |
 | `POST` | `/api/v1/cp-7f3c/products/{id}/codes` | 签发绑定当前商品与已发布起始版本的兑换码 |
 | `POST` | `/api/v1/cp-7f3c/codes/{id}/action` | 暂停、恢复或撤销兑换凭证 |
 | `POST` | `/api/v1/redeem` | 兑换并取得交付凭证 |
@@ -160,7 +164,7 @@ npm run dev
 
 版本发布需要商品为 `ACTIVE`，且该版本至少绑定一个交付文件。权益交付范围为“通用文件 + 起始版本及其后续已发布版本”；基础版本一旦被已签发兑换码引用，服务端返回 `release_in_use` 并阻止撤回。
 
-`OPERATOR_WEB_PATH` 和 `OPERATOR_API_PATH` 可更改默认控制台与运营 API 路径；更改后需要重新构建 `console` 并重启 API。`CONSOLE_URL` 决定用户端“前往独立控制台”的外部链接。控制台内的部署设置用于保存目标配置和生成环境变量，不会动态改写运行中的路由。运营业务查询的租户来自已验证服务端会话，不接受前端提交的 `tenant_id`；公开目录与兑换目前固定到默认租户。
+`OPERATOR_WEB_PATH` 和 `OPERATOR_API_PATH` 可更改默认控制台与运营 API 路径；更改后需要重新构建 `console` 并重启 API。`CONSOLE_URL` 决定用户端“前往独立控制台”的外部链接，`STOREFRONT_URL` 决定控制台内商户公开入口的域名。控制台内的部署设置用于保存目标配置和生成环境变量，不会动态改写运行中的路由。运营业务查询的租户来自已验证服务端会话，不接受前端提交的 `tenant_id`；公开默认目录仍为默认空间，商户目录使用空间 slug，兑换与交付由服务端凭证定位租户。
 
 ## 视觉方向
 

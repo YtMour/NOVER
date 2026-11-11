@@ -33,6 +33,8 @@ func (a *App) Handler() http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/products", a.listPublicProducts)
 		r.Get("/products/{productID}/images/{imageID}", a.serveProductImage)
+		r.Get("/spaces/{spaceSlug}/products", a.listSpaceProducts)
+		r.Get("/spaces/{spaceSlug}/products/{productID}/images/{imageID}", a.serveSpaceProductImage)
 		r.Post("/join-applications", a.createJoinApplication)
 		r.Post(operatorPath+"/login", a.operatorLogin)
 		r.Post("/redeem", a.redeem)
@@ -54,6 +56,8 @@ func (a *App) Handler() http.Handler {
 			r.With(a.requirePermission(permissionProductWrite)).Put("/products/{productID}", a.updateProduct)
 			r.With(a.requirePermission(permissionProductPublish)).Post("/products/{productID}/status", a.updateProductStatus)
 			r.With(a.requirePermission(permissionFulfillmentWrite)).Post("/products/{productID}/assets", a.uploadAsset)
+			r.With(a.requirePermission(permissionProductRead)).Get("/products/{productID}/assets", a.listProductAssets)
+			r.With(a.requirePermission(permissionFulfillmentWrite)).Delete("/products/{productID}/assets/{assetID}", a.deleteDraftAsset)
 			r.With(a.requirePermission(permissionProductRead)).Get("/products/{productID}/images", a.listProductImages)
 			r.With(a.requirePermission(permissionProductWrite)).Post("/products/{productID}/images", a.uploadProductImage)
 			r.With(a.requirePermission(permissionProductRead)).Get("/products/{productID}/images/{imageID}", a.serveOperatorProductImage)

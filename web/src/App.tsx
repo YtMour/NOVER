@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { NavLink, Route, Routes, useNavigate } from 'react-router-dom'
+import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Moon, Sun, UserPlus } from 'lucide-react'
 import { BrandMark } from './components/BrandMark'
@@ -20,10 +20,11 @@ function resolveInitialTheme(): Theme {
 
 function Shell() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [theme, setTheme] = useState<Theme>(resolveInitialTheme)
   const health = useQuery({ queryKey: ['service-health'], queryFn: loadServiceHealth, refetchInterval: 30_000, retry: false })
   const deliveryToken = sessionStorage.getItem('nover.deliveryToken') ?? ''
-  const currentPath = window.location.pathname
+  const currentPath = location.pathname
 
   useEffect(() => {
     if (deliveryToken && currentPath === '/') navigate('/delivery', { replace: true })
@@ -44,9 +45,9 @@ function Shell() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <NavLink to="/" className="brand-link" aria-label="NOVER 首页"><BrandMark /></NavLink>
+        <NavLink to={currentPath.startsWith('/spaces/') ? `/spaces/${currentPath.split('/')[2]}` : '/'} className="brand-link" aria-label="NOVER 首页"><BrandMark /></NavLink>
         <nav className="top-navigation" aria-label="主导航">
-          <NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? 'is-active' : ''}`}>交付门户</NavLink>
+          <NavLink to={currentPath.startsWith('/spaces/') ? `/spaces/${currentPath.split('/')[2]}` : '/'} end className={({ isActive }) => `nav-link ${isActive ? 'is-active' : ''}`}>交付门户</NavLink>
         </nav>
         <NavLink to="/join" className={({ isActive }) => `join-link ${isActive ? 'is-active' : ''}`}><UserPlus size={15} /><span>加入我们</span></NavLink>
         <button
@@ -64,8 +65,10 @@ function Shell() {
           <Suspense fallback={<div className="loading-line">正在打开页面…</div>}>
             <Routes>
               <Route path="/" element={<RedeemPage />} />
+              <Route path="/spaces/:spaceSlug" element={<RedeemPage />} />
               <Route path="/delivery" element={<DeliveryPage token={deliveryToken} onLogout={logout} />} />
               <Route path="/products/:productID" element={<ProductDetailPage />} />
+              <Route path="/spaces/:spaceSlug/products/:productID" element={<ProductDetailPage />} />
               <Route path="/join" element={<JoinPage />} />
               <Route path="*" element={<RedeemPage />} />
             </Routes>

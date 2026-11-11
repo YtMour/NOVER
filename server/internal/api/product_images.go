@@ -259,6 +259,21 @@ func (a *App) serveProductImage(w http.ResponseWriter, r *http.Request) {
 	a.serveStoredProductImage(w, r, key, mimeType, true)
 }
 
+func (a *App) serveSpaceProductImage(w http.ResponseWriter, r *http.Request) {
+	var key, mimeType string
+	err := a.db.QueryRow(r.Context(), `SELECT pi.object_key, pi.mime_type FROM product_images pi JOIN products p ON p.id=pi.product_id AND p.tenant_id=pi.tenant_id JOIN tenants t ON t.id=p.tenant_id AND t.status='ACTIVE' WHERE t.slug=$1 AND pi.id=$2 AND pi.product_id=$3 AND p.status='ACTIVE'`, chi.URLParam(r, "spaceSlug"), chi.URLParam(r, "imageID"), chi.URLParam(r, "productID")).Scan(&key, &mimeType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "image_not_found", "Image was not found.")
+		return
+	}
+	if err != nil {
+		a.logError(r, "load space product image failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "The image could not be loaded.")
+		return
+	}
+	a.serveStoredProductImage(w, r, key, mimeType, true)
+}
+
 func (a *App) serveOperatorProductImage(w http.ResponseWriter, r *http.Request) {
 	var key, mimeType string
 	err := a.db.QueryRow(r.Context(), `SELECT object_key, mime_type FROM product_images WHERE id=$1 AND product_id=$2 AND tenant_id=$3`, chi.URLParam(r, "imageID"), chi.URLParam(r, "productID"), requestTenantID(r)).Scan(&key, &mimeType)

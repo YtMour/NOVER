@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm'
 import type { Product } from '../../types'
 import { getDemoProductVisual } from '../../lib/productVisuals'
 
-export function ProductDetailView({ product, preview = false, imageURLs }: { product: Product; preview?: boolean; imageURLs?: Record<string, string> }) {
+export function ProductDetailView({ product, preview = false, imageURLs, backTo = '/#catalog', redeemTo = '/#redeem' }: { product: Product; preview?: boolean; imageURLs?: Record<string, string>; backTo?: string; redeemTo?: string }) {
   const fallback = getDemoProductVisual(product.id)
   const images = product.images?.length ? product.images : fallback ? [{ id: '__demo_visual__', url: fallback.src, alt_text: fallback.alt, mime_type: 'image/webp', size_bytes: 0 }] : []
   const imageSource = (image: Product['images'] extends (infer T)[] | undefined ? T : never) => image.id === '__demo_visual__' || imageURLs === undefined ? image.url : imageURLs[image.id]
@@ -18,7 +18,7 @@ export function ProductDetailView({ product, preview = false, imageURLs }: { pro
 
   return (
     <section className={`product-detail-page ${preview ? 'product-detail-page--preview' : ''}`}>
-      {preview ? <span className="back-link"><ArrowLeft size={15} />返回商品目录</span> : <Link className="back-link" to="/#catalog"><ArrowLeft size={15} />返回商品目录</Link>}
+      {preview ? <span className="back-link"><ArrowLeft size={15} />返回商品目录</span> : <Link className="back-link" to={backTo}><ArrowLeft size={15} />返回商品目录</Link>}
       <div className="product-detail-layout">
         <div className="product-detail-copy">
           <div className="eyebrow"><span className="eyebrow-line" /> PRODUCT DETAIL</div>
@@ -35,7 +35,7 @@ export function ProductDetailView({ product, preview = false, imageURLs }: { pro
           <span className="section-kicker">READY WHEN YOU ARE</span>
           <h2>已经完成购买？</h2>
           <p>使用卖家发送的兑换码，查看此商品的文件清单、大小和校验信息。</p>
-          {preview ? <span className="button button-primary">输入兑换码 <ArrowRight size={16} /></span> : <Link className="button button-primary" to="/#redeem">输入兑换码 <ArrowRight size={16} /></Link>}
+          {preview ? <span className="button button-primary">输入兑换码 <ArrowRight size={16} /></span> : <Link className="button button-primary" to={redeemTo}>输入兑换码 <ArrowRight size={16} /></Link>}
           <div className="panel-footnote"><span className="tiny-status-dot" /><span>实际文件不会出现在公开目录</span></div>
         </aside>
       </div>

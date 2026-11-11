@@ -42,6 +42,6 @@ export type Delivery = {
   assets: Asset[]
 }
 
-export type ProductList = { items: Product[] }
+export type ProductList = { items: Product[]; space_name?: string }
 export type RedeemResponse = { access_token: string; product_id: string }
 export type DownloadTicket = { url: string; expires_at: string }

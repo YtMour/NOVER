@@ -66,6 +66,7 @@ services:
         VITE_OPERATOR_PATH: ${OPERATOR_WEB_PATH:-/ops-7f3c}
         VITE_OPERATOR_API_PATH: ${OPERATOR_API_PATH:-cp-7f3c}
         VITE_API_PORT: ${API_HOST_PORT:-48080}
+        VITE_STOREFRONT_URL: ${STOREFRONT_URL:-http://localhost:45173}
     restart: unless-stopped
     depends_on:
       - api

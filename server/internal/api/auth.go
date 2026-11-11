@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -24,6 +25,7 @@ type operatorIdentity struct {
 	PlatformRole      string   `json:"platform_role"`
 	MembershipID      string   `json:"membership_id"`
 	TenantID          string   `json:"tenant_id"`
+	TenantSlug        string   `json:"tenant_slug"`
 	TenantName        string   `json:"tenant_name"`
 	Role              string   `json:"role"`
 	MembershipStatus  string   `json:"membership_status"`
@@ -54,7 +56,7 @@ func (a *App) operatorLogin(w http.ResponseWriter, r *http.Request) {
 	var tokenVersion int
 	err := a.db.QueryRow(r.Context(), `
 		SELECT u.id, u.username, u.display_name, u.password_hash, COALESCE(u.platform_role, ''), u.token_version,
-		       m.id, m.tenant_id, t.name, m.role, m.status,
+		       m.id, m.tenant_id, t.name, t.slug, m.role, m.status,
 		       COALESCE(ja.id, ''), COALESCE(ja.status, '')
 		FROM operator_users u
 		JOIN tenant_memberships m ON m.user_id=u.id AND m.status IN ('PENDING', 'ACTIVE')
@@ -64,7 +66,7 @@ func (a *App) operatorLogin(w http.ResponseWriter, r *http.Request) {
 		ORDER BY CASE WHEN t.id='tenant-default' THEN 0 ELSE 1 END, m.created_at
 		LIMIT 1`, input.Username).Scan(
 		&identity.UserID, &identity.Username, &identity.DisplayName, &passwordHash, &identity.PlatformRole, &tokenVersion,
-		&identity.MembershipID, &identity.TenantID, &identity.TenantName, &identity.Role, &identity.MembershipStatus,
+		&identity.MembershipID, &identity.TenantID, &identity.TenantName, &identity.TenantSlug, &identity.Role, &identity.MembershipStatus,
 		&identity.ApplicationID, &identity.ApplicationStatus,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -125,7 +127,27 @@ func (a *App) revokeOperatorSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) listPublicProducts(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.Query(r.Context(), `SELECT p.id, ''::text, ''::text, ''::text, ''::text, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+`, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p WHERE p.tenant_id=$1 AND p.status='ACTIVE' ORDER BY p.created_at DESC`, defaultTenantID)
+	a.writePublicProducts(w, r, defaultTenantID, "", "")
+}
+
+func (a *App) listSpaceProducts(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "spaceSlug")
+	var tenantID, tenantName string
+	err := a.db.QueryRow(r.Context(), `SELECT id, name FROM tenants WHERE slug=$1 AND status='ACTIVE'`, slug).Scan(&tenantID, &tenantName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "space_not_found", "This space is not available.")
+		return
+	}
+	if err != nil {
+		a.logError(r, "load public space failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
+		return
+	}
+	a.writePublicProducts(w, r, tenantID, slug, tenantName)
+}
+
+func (a *App) writePublicProducts(w http.ResponseWriter, r *http.Request, tenantID, slug, tenantName string) {
+	rows, err := a.db.Query(r.Context(), `SELECT p.id, ''::text, ''::text, ''::text, ''::text, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+`, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p WHERE p.tenant_id=$1 AND p.status='ACTIVE' ORDER BY p.created_at DESC`, tenantID)
 	if err != nil {
 		a.logError(r, "list public products failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
@@ -138,7 +160,16 @@ func (a *App) listPublicProducts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	if slug != "" {
+		for i := range items {
+			items[i].TenantName = tenantName
+			items[i].Detail = strings.ReplaceAll(items[i].Detail, "/api/v1/products/"+items[i].ID+"/images/", "/api/v1/spaces/"+slug+"/products/"+items[i].ID+"/images/")
+			for j := range items[i].Images {
+				items[i].Images[j].URL = "/api/v1/spaces/" + slug + "/products/" + items[i].ID + "/images/" + items[i].Images[j].ID
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "space_name": tenantName})
 }
 
 func (a *App) requireOperator(next http.Handler) http.Handler {
@@ -153,7 +184,7 @@ func (a *App) requireOperator(next http.Handler) http.Handler {
 		identity := operatorIdentity{SessionID: claims.SessionID}
 		err := a.db.QueryRow(r.Context(), `
 			SELECT u.id, u.username, u.display_name, COALESCE(u.platform_role, ''),
-			       m.id, m.tenant_id, t.name, m.role, m.status,
+			       m.id, m.tenant_id, t.name, t.slug, m.role, m.status,
 			       COALESCE(ja.id, ''), COALESCE(ja.status, '')
 			FROM operator_sessions s
 			JOIN operator_users u ON u.id=s.user_id AND u.status='ACTIVE' AND u.token_version=s.token_version
@@ -162,7 +193,7 @@ func (a *App) requireOperator(next http.Handler) http.Handler {
 			LEFT JOIN join_applications ja ON ja.operator_user_id=u.id
 			WHERE s.id=$1 AND s.user_id=$2 AND s.token_hash=$3 AND s.revoked_at IS NULL AND s.expires_at>NOW()`,
 			claims.SessionID, claims.UserID, hashToken(token),
-		).Scan(&identity.UserID, &identity.Username, &identity.DisplayName, &identity.PlatformRole, &identity.MembershipID, &identity.TenantID, &identity.TenantName, &identity.Role, &identity.MembershipStatus, &identity.ApplicationID, &identity.ApplicationStatus)
+		).Scan(&identity.UserID, &identity.Username, &identity.DisplayName, &identity.PlatformRole, &identity.MembershipID, &identity.TenantID, &identity.TenantName, &identity.TenantSlug, &identity.Role, &identity.MembershipStatus, &identity.ApplicationID, &identity.ApplicationStatus)
 		if err != nil {
 			if !errors.Is(err, pgx.ErrNoRows) {
 				a.logError(r, "validate operator session failed", err)

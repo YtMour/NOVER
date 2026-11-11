@@ -48,6 +48,7 @@ export type Asset = {
   mime_type: string
   size_bytes: number
   sha256: string
+  created_at?: string
 }
 
 export type Delivery = {
@@ -66,6 +67,7 @@ export type OperatorSession = {
   membership_id: string
   tenant_id: string
   tenant_name: string
+  tenant_slug: string
   role: 'OWNER' | 'ADMIN' | 'EDITOR' | 'FULFILLMENT' | 'ANALYST'
   membership_status: 'PENDING' | 'ACTIVE' | 'SUSPENDED'
   application_id?: string
