@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/YtMour/NOVER/server/internal/api"
+	"github.com/YtMour/NOVER/server/internal/buildinfo"
 	"github.com/YtMour/NOVER/server/internal/config"
 	"github.com/YtMour/NOVER/server/internal/db"
 )
@@ -33,10 +34,12 @@ func main() {
 	}
 	defer pool.Close()
 
-	if err := db.Migrate(ctx, pool); err != nil {
+	applied, err := db.Migrate(ctx, pool)
+	if err != nil {
 		logger.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("database migrations applied", "count", applied, "version", buildinfo.Version, "commit", buildinfo.Commit)
 	if err := db.EnsureBootstrapIdentity(ctx, pool, cfg.AdminUsername, cfg.AdminPassword, cfg.DefaultTenantName); err != nil {
 		logger.Error("bootstrap operator identity failed", "error", err)
 		os.Exit(1)

@@ -40,6 +40,17 @@ type activitySummary struct {
 
 func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
 	identity, _ := operatorIdentityFromContext(r.Context())
+	limit, offset, err := parsePagination(r, 100, 200)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", "Use a limit between 1 and 200 and a non-negative offset.")
+		return
+	}
+	var total int
+	if err := a.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM redeem_codes WHERE tenant_id=$1`, identity.TenantID).Scan(&total); err != nil {
+		a.logError(r, "count admin activity failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Activity could not be loaded.")
+		return
+	}
 	rows, err := a.db.Query(r.Context(), `
 		SELECT rc.id, p.id, p.name, rc.display_suffix, rc.status, rc.external_order_ref,
 		       rc.expires_at, rc.redeemed_at, e.valid_until,
@@ -50,7 +61,7 @@ func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
 	LEFT JOIN entitlements e ON e.id=rc.entitlement_id AND e.tenant_id=rc.tenant_id
 	WHERE rc.tenant_id=$1
 	ORDER BY rc.created_at DESC
-	LIMIT 100`, identity.TenantID)
+	LIMIT $2 OFFSET $3`, identity.TenantID, limit, offset)
 	if err != nil {
 		a.logError(r, "list admin activity failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Activity could not be loaded.")
@@ -106,7 +117,14 @@ func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Activity summary could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "summary": summary})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":    items,
+		"summary":  summary,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": offset+len(items) < total,
+	})
 }
 
 func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {

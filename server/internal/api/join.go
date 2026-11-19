@@ -62,7 +62,8 @@ func (input joinApplicationInput) valid() bool {
 }
 
 func (a *App) createJoinApplication(w http.ResponseWriter, r *http.Request) {
-	if !a.allowRequest(r, "join-application", 5, time.Hour) {
+	if allowed, retry := a.allowRequest(r, "join-application", 5, time.Hour); !allowed {
+		setRetryAfter(w, retry)
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Please wait before submitting another application.")
 		return
 	}
@@ -178,7 +179,9 @@ func (a *App) reviewJoinApplication(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "application_not_found", "The application was not found.")
 		return
 	}
-	if (input.Action == "REVIEW" && currentStatus != "PENDING" && currentStatus != "REVIEWING") || (input.Action == "APPROVE" && currentStatus == "REJECTED") || (input.Action == "REJECT" && currentStatus == "APPROVED") {
+	if (input.Action == "REVIEW" && currentStatus != "PENDING" && currentStatus != "REVIEWING") ||
+		(input.Action == "APPROVE" && (currentStatus == "REJECTED" || currentStatus == "APPROVED")) ||
+		(input.Action == "REJECT" && (currentStatus == "APPROVED" || currentStatus == "REJECTED")) {
 		writeError(w, http.StatusConflict, "application_status_conflict", "This application is no longer in a compatible review state.")
 		return
 	}

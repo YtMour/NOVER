@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowDownToLine, Clipboard, FileArchive, FileCode2, FileText, GitBranch, LogOut, ShieldCheck, Sparkles } from 'lucide-react'
 import anime from 'animejs'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createDownloadTicket, loadDelivery } from '../../lib/api'
 import { StatusMessage } from '../../components/StatusMessage'
 import type { Asset } from '../../types'
+
+const DAY_MS = 86_400_000
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -31,14 +33,26 @@ function groupAssets(assets: Asset[]) {
   return [...groups.entries()].map(([key, group]) => ({ key, ...group }))
 }
 
+function formatAccess(validUntil: string) {
+  const date = new Date(validUntil)
+  if (Number.isNaN(date.getTime())) return { text: `可访问至 ${validUntil}`, expired: false }
+  const remaining = date.getTime() - Date.now()
+  if (remaining <= 0) return { text: '已过期', expired: true }
+  const days = Math.max(1, Math.ceil(remaining / DAY_MS))
+  return { text: `可访问至 ${date.toLocaleDateString('zh-CN')}（还剩 ${days} 天）`, expired: false }
+}
+
 export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () => void }) {
   const delivery = useQuery({ queryKey: ['delivery', token], queryFn: () => loadDelivery(token) })
   const [downloadError, setDownloadError] = useState('')
   const downloadMutation = useMutation({
     mutationFn: (assetId: string) => createDownloadTicket(token, assetId),
     onSuccess: ({ url }) => {
-      window.location.assign(url)
       setDownloadError('')
+      window.location.assign(url)
+      // Ticket creation consumes one download credit, so refresh the quota when
+      // the page stays open for an attachment download.
+      void delivery.refetch()
     },
     onError: (error: Error) => setDownloadError(error.message),
   })
@@ -54,7 +68,7 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
     return (
       <div className="delivery-error surface-panel">
         <StatusMessage>{delivery.error.message}</StatusMessage>
-        <button className="button button-secondary" onClick={onLogout}>返回兑换</button>
+        <button className="button button-secondary" type="button" onClick={onLogout}>返回兑换</button>
       </div>
     )
   }
@@ -62,6 +76,12 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
   const latestVersion = data.product.current_release_version || data.base_version || ''
   const hasUpdate = Boolean(data.base_version && latestVersion && data.base_version !== latestVersion)
   const assetGroups = groupAssets(data.assets)
+  const maxDownloads = typeof data.max_downloads === 'number' ? data.max_downloads : null
+  const downloadsUsed = typeof data.downloads_used === 'number' ? data.downloads_used : 0
+  const remainingDownloads = maxDownloads === null ? null : Math.max(0, maxDownloads - downloadsUsed)
+  const downloadsExhausted = remainingDownloads !== null && remainingDownloads <= 0
+  const access = formatAccess(data.valid_until)
+  const pendingAssetId = downloadMutation.isPending ? downloadMutation.variables : undefined
 
   return (
     <section className="delivery-page">
@@ -70,7 +90,7 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
           <div className="eyebrow"><span className="eyebrow-line" /> DELIVERY SPACE</div>
           <h1 className="page-title">交付空间</h1>
         </div>
-        <button className="icon-button" title="退出交付空间" aria-label="退出交付空间" onClick={onLogout}><LogOut size={18} /></button>
+        <button className="icon-button" type="button" title="退出交付空间" aria-label="退出交付空间" onClick={onLogout}><LogOut size={18} aria-hidden="true" /></button>
       </div>
 
       <section className="product-overview">
@@ -80,11 +100,12 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
           <h2>{data.product.name}</h2>
           {data.product.description && <p>{data.product.description}</p>}
         </div>
-        <div className="access-state"><span className="state-dot" /> 可访问至 {new Date(data.valid_until).toLocaleDateString('zh-CN')}</div>
+        <div className={`access-state${access.expired ? ' is-expired' : ''}`}><span className="state-dot" aria-hidden="true" /> <span>{access.text}</span></div>
+        {maxDownloads !== null && <div className={`delivery-quota${downloadsExhausted ? ' is-exhausted' : ''}`}><ArrowDownToLine size={13} aria-hidden="true" /><span>下载额度 {downloadsUsed} / {maxDownloads}{downloadsExhausted ? '（已用完）' : `（剩余 ${remainingDownloads} 次）`}</span></div>}
       </section>
 
       <section className={`delivery-version-panel${hasUpdate ? ' has-update' : ''}`} aria-label="版本权益">
-        <div className="delivery-version-icon">{hasUpdate ? <Sparkles size={18} /> : <GitBranch size={18} />}</div>
+        <div className="delivery-version-icon">{hasUpdate ? <Sparkles size={18} aria-hidden="true" /> : <GitBranch size={18} aria-hidden="true" />}</div>
         <div className="delivery-version-copy">
           <span className="section-kicker">VERSION ENTITLEMENT</span>
           <strong>{data.base_version ? `购买起始版本 ${data.base_version}` : '历史通用权益'}</strong>
@@ -101,43 +122,66 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
       </div>
 
       {downloadError && <StatusMessage>{downloadError}</StatusMessage>}
+      {downloadsExhausted && <StatusMessage kind="info">{`下载额度已用完（已用 ${downloadsUsed} / ${maxDownloads} 次）。如需继续下载，请联系卖家补充下载额度。`}</StatusMessage>}
       {data.assets.length === 0 ? (
         <div className="empty-state">此商品暂时没有可下载的文件。</div>
       ) : (
         <div className="delivery-release-list">
           {assetGroups.map((group, index) => <section className="delivery-release-group" key={group.key}>
             <div className="delivery-release-heading"><div><span>{group.key === 'legacy' ? 'SHARED RESOURCES' : `RELEASE ${group.label}`}</span><h3>{group.key === 'legacy' ? group.label : `版本 ${group.label}`}</h3></div><small>{index === 0 && group.label === latestVersion ? '最新版本' : `${group.assets.length} 个文件`}</small></div>
-            <div className="asset-list">{group.assets.map((asset) => <AssetRow key={asset.id} asset={asset} onDownload={() => downloadMutation.mutate(asset.id)} pending={downloadMutation.isPending} />)}</div>
+            <div className="asset-list">{group.assets.map((asset) => <AssetRow key={asset.id} asset={asset} onDownload={() => downloadMutation.mutate(asset.id)} pending={pendingAssetId === asset.id} downloadsExhausted={downloadsExhausted} />)}</div>
           </section>)}
         </div>
       )}
-      <div className="delivery-assurance"><ShieldCheck size={16} /> 下载链接短时有效；需要重新下载时可再次生成。</div>
+      <div className="delivery-assurance"><ShieldCheck size={16} aria-hidden="true" /> 下载链接短时有效；需要重新下载时可再次生成。</div>
     </section>
   )
 }
 
-function AssetRow({ asset, onDownload, pending }: { asset: Asset; onDownload: () => void; pending: boolean }) {
-  const [copied, setCopied] = useState(false)
+type CopyState = 'idle' | 'copied' | 'failed'
+
+function AssetRow({ asset, onDownload, pending, downloadsExhausted }: { asset: Asset; onDownload: () => void; pending: boolean; downloadsExhausted: boolean }) {
+  const [copyState, setCopyState] = useState<CopyState>('idle')
+  const copyTimer = useRef<number | undefined>(undefined)
   const Icon = fileIcon(asset.file_name)
 
+  useEffect(() => () => {
+    if (copyTimer.current !== undefined) window.clearTimeout(copyTimer.current)
+  }, [])
+
   async function copyHash() {
-    await navigator.clipboard.writeText(asset.sha256)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
+    let next: CopyState = 'copied'
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard-unavailable')
+      await navigator.clipboard.writeText(asset.sha256)
+    } catch {
+      next = 'failed'
+    }
+    setCopyState(next)
+    if (copyTimer.current !== undefined) window.clearTimeout(copyTimer.current)
+    copyTimer.current = window.setTimeout(() => setCopyState('idle'), 2200)
   }
+
+  const copyLabel = copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '校验值'
+  const copyFeedback = copyState === 'copied'
+    ? `已复制 ${asset.file_name} 的 SHA-256 校验值`
+    : copyState === 'failed'
+      ? '复制失败，请手动选择校验值复制'
+      : ''
 
   return (
     <article className="asset-row">
-      <div className="asset-file-icon"><Icon size={19} strokeWidth={1.8} /></div>
+      <div className="asset-file-icon"><Icon size={19} strokeWidth={1.8} aria-hidden="true" /></div>
       <div className="asset-details">
         <h3>{asset.file_name}</h3>
         <div className="asset-meta"><span>{formatBytes(asset.size_bytes)}</span><span className="meta-separator" /><span>SHA-256</span><code>{asset.sha256.slice(0, 12)}…</code></div>
       </div>
-      <button className="hash-copy" title="复制 SHA-256 校验值" aria-label="复制 SHA-256 校验值" onClick={copyHash}>
-        <Clipboard size={15} /> <span>{copied ? '已复制' : '校验值'}</span>
+      <span className="sr-only" role="status" aria-live="polite">{copyFeedback}</span>
+      <button className="hash-copy" type="button" title="复制 SHA-256 校验值" aria-label={`复制 ${asset.file_name} 的 SHA-256 校验值`} onClick={() => void copyHash()}>
+        <Clipboard size={15} aria-hidden="true" /> <span>{copyLabel}</span>
       </button>
-      <button className="button button-download" onClick={onDownload} disabled={pending}>
-        <ArrowDownToLine size={16} /><span>{pending ? '准备中' : '下载'}</span>
+      <button className="button button-download" type="button" onClick={onDownload} disabled={pending || downloadsExhausted} title={downloadsExhausted ? '下载额度已用完' : undefined}>
+        <ArrowDownToLine size={16} aria-hidden="true" /><span>{pending ? '准备中' : '下载'}</span>
       </button>
     </article>
   )

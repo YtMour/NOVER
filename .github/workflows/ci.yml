@@ -1,0 +1,117 @@
+# NOVER 持续集成：提交规范、Go 后端、双端前端构建、端到端冒烟。
+# 所有构建类 job 互不依赖；冒烟 job 使用 Docker Compose 在 runner 上启动完整服务栈。
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    name: 提交检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 检查空白错误（git diff --check）
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "比较基准：$base"
+            git diff --check "$base" HEAD
+          else
+            echo "无可用基准提交，检查工作区差异。"
+            git diff --check
+          fi
+
+  backend:
+    name: Go 后端
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: go build
+        run: go build ./...
+
+  frontend:
+    name: "前端构建（${{ matrix.app }}）"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, console]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - name: 安装依赖
+        run: npm ci
+      - name: 构建
+        run: npm run build
+
+  smoke:
+    name: 端到端冒烟
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 准备开发环境变量
+        run: cp .env.example .env
+      - name: 构建并启动服务栈
+        run: docker compose up -d --build
+      - name: 等待 API 就绪（最多 120 秒）
+        shell: bash
+        run: |
+          for attempt in $(seq 1 120); do
+            if curl -fsS --max-time 2 http://127.0.0.1:48080/readyz >/dev/null 2>&1; then
+              echo "API 已就绪（第 ${attempt} 次探测）"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::API 未在 120 秒内就绪"
+          docker compose ps
+          docker compose logs --no-color --tail=200
+          exit 1
+      - name: 运行冒烟脚本
+        run: pwsh -NoProfile -File scripts/qa/run-all.ps1
+      - name: 失败时导出服务日志
+        if: failure()
+        run: docker compose logs --no-color --tail=500
+      - name: 清理容器与卷
+        if: always()
+        run: docker compose down -v

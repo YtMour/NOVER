@@ -21,6 +21,10 @@ services:
   api:
     build:
       context: ./server
+      args:
+        VERSION: ${APP_VERSION:-dev}
+        COMMIT: ${GIT_COMMIT:-unknown}
+        BUILT_AT: ${BUILD_TIME:-unknown}
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-development}
@@ -40,6 +44,33 @@ services:
       - private-assets:/var/lib/nover/files
     ports:
       - "${API_BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-48080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - private
+
+  # Opt-in operations profile: docker compose --profile ops run --rm maintenance
+  maintenance:
+    build:
+      context: ./server
+      args:
+        VERSION: ${APP_VERSION:-dev}
+        COMMIT: ${GIT_COMMIT:-unknown}
+        BUILT_AT: ${BUILD_TIME:-unknown}
+    profiles: ["ops"]
+    entrypoint: ["/usr/local/bin/nover-maintenance"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-nover}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nover}?sslmode=disable
+      STORAGE_DIR: /var/lib/nover/files
+    volumes:
+      - private-assets:/var/lib/nover/files
     depends_on:
       db:
         condition: service_healthy

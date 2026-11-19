@@ -1,9 +1,17 @@
-param([switch]$KeepFixture)
+﻿param([switch]$KeepFixture)
+
+# 版本权益与下载额度冒烟脚本。
+# 兼容 Windows PowerShell 5.1、PowerShell 7 和 Linux：
+# - 上传文件使用外部 curl（Windows 用 curl.exe），检查退出码与 HTTP 状态后 ConvertFrom-Json；
+# - 路径全部用 Join-Path 拼接，临时目录用 [IO.Path]::GetTempPath()；
+# - 文件保持 UTF-8 BOM + LF，保证 Windows PowerShell 5.1 能正确读取中文。
 
 $ErrorActionPreference = 'Stop'
 $base = 'http://127.0.0.1:48080'
 $operatorPath = 'cp-7f3c'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+. (Join-Path $PSScriptRoot 'curl-upload.ps1')
+
 $envMap = @{}
 Get-Content (Join-Path $repoRoot '.env') | ForEach-Object {
   if ($_ -match '^([^#=]+)=(.*)$') { $envMap[$matches[1]] = $matches[2] }
@@ -13,10 +21,11 @@ $pass = if ($envMap['ADMIN_PASSWORD']) { $envMap['ADMIN_PASSWORD'] } else { 'adm
 $headers = @{}
 $productId = $null
 $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$tempDir = [System.IO.Path]::GetTempPath()
 $tempFiles = @(
-  (Join-Path $env:TEMP "nover-$stamp-1.0.0.txt"),
-  (Join-Path $env:TEMP "nover-$stamp-1.1.0.txt"),
-  (Join-Path $env:TEMP "nover-$stamp-2.0.0-draft.txt")
+  (Join-Path $tempDir "nover-$stamp-1.0.0.txt"),
+  (Join-Path $tempDir "nover-$stamp-1.1.0.txt"),
+  (Join-Path $tempDir "nover-$stamp-2.0.0-draft.txt")
 )
 
 function Api([string]$method, [string]$path, $body = $null, $customHeaders = $null) {
@@ -47,7 +56,7 @@ try {
 
   $release100 = Api POST "/api/v1/$operatorPath/products/$productId/releases" @{ version = '1.0.0'; changelog = '首个可交付版本' } $headers
   Set-Content -LiteralPath $tempFiles[0] -Value 'NOVER release 1.0.0 acceptance file' -Encoding utf8
-  $asset100 = Invoke-RestMethod -Method Post -Uri "$base/api/v1/$operatorPath/products/$productId/assets" -Headers $headers -Form @{ release_id = $release100.id; file = Get-Item $tempFiles[0] }
+  $asset100 = Invoke-CurlFileUpload -Uri "$base/api/v1/$operatorPath/products/$productId/assets" -FilePath $tempFiles[0] -Headers $headers -Fields @{ release_id = $release100.id }
 
   $product = Api POST "/api/v1/$operatorPath/products/$productId/status" @{ status = 'ACTIVE' } $headers
   $release100 = Api POST "/api/v1/$operatorPath/products/$productId/releases/$($release100.id)/status" @{ status = 'PUBLISHED' } $headers
@@ -57,15 +66,17 @@ try {
   $redeem = Api POST '/api/v1/redeem' @{ code = $issued.codes[0] }
   $buyerHeaders = @{ Authorization = "Bearer $($redeem.access_token)" }
   $delivery100 = Api GET '/api/v1/delivery' $null $buyerHeaders
+  # 兑换后立即读取额度字段：max_downloads 与 downloads_used 必须由交付接口返回。
+  $quotaBeforeTicket = $delivery100
 
   $release110 = Api POST "/api/v1/$operatorPath/products/$productId/releases" @{ version = '1.1.0'; changelog = '后续免费更新版本' } $headers
   Set-Content -LiteralPath $tempFiles[1] -Value 'NOVER release 1.1.0 acceptance file' -Encoding utf8
-  $asset110 = Invoke-RestMethod -Method Post -Uri "$base/api/v1/$operatorPath/products/$productId/assets" -Headers $headers -Form @{ release_id = $release110.id; file = Get-Item $tempFiles[1] }
+  $asset110 = Invoke-CurlFileUpload -Uri "$base/api/v1/$operatorPath/products/$productId/assets" -FilePath $tempFiles[1] -Headers $headers -Fields @{ release_id = $release110.id }
   $release110 = Api POST "/api/v1/$operatorPath/products/$productId/releases/$($release110.id)/status" @{ status = 'PUBLISHED' } $headers
 
   $draft200 = Api POST "/api/v1/$operatorPath/products/$productId/releases" @{ version = '2.0.0'; changelog = '未发布草稿，不应交付' } $headers
   Set-Content -LiteralPath $tempFiles[2] -Value 'NOVER release 2.0.0 draft file' -Encoding utf8
-  $asset200 = Invoke-RestMethod -Method Post -Uri "$base/api/v1/$operatorPath/products/$productId/assets" -Headers $headers -Form @{ release_id = $draft200.id; file = Get-Item $tempFiles[2] }
+  $asset200 = Invoke-CurlFileUpload -Uri "$base/api/v1/$operatorPath/products/$productId/assets" -FilePath $tempFiles[2] -Headers $headers -Fields @{ release_id = $draft200.id }
 
   $delivery110 = Api GET '/api/v1/delivery' $null $buyerHeaders
   $withdrawCode = ''
@@ -77,6 +88,8 @@ try {
   }
 
   $ticket = Api POST "/api/v1/assets/$($asset110.id)/ticket" $null $buyerHeaders
+  # 创建下载票据会消耗一次额度，再次读取交付接口时 downloads_used 应加 1。
+  $deliveryAfterTicket = Api GET '/api/v1/delivery' $null $buyerHeaders
   $draftTicketCode = ''
   try {
     Api POST "/api/v1/assets/$($asset200.id)/ticket" $null $buyerHeaders | Out-Null
@@ -109,6 +122,9 @@ try {
   $summary.asset_list_count = @($filesBeforeDelete.items).Count
   $summary.published_file_delete_result = $publishedDeleteCode
   $summary.draft_file_deleted = -not (@($filesAfterDelete.items.id) -contains $asset200.id)
+  $summary.max_downloads = $quotaBeforeTicket.max_downloads
+  $summary.downloads_used_before_ticket = $quotaBeforeTicket.downloads_used
+  $summary.downloads_used_after_ticket = $deliveryAfterTicket.downloads_used
   $summary.pass = (
     $summary.health -eq 'ready' -and
     $summary.base_release -eq '1.0.0' -and
@@ -122,7 +138,10 @@ try {
     $summary.repeat_publish_kept_timestamp -and
     $summary.asset_list_count -eq 3 -and
     $publishedDeleteCode -eq 'asset_immutable' -and
-    $summary.draft_file_deleted
+    $summary.draft_file_deleted -and
+    $summary.max_downloads -eq 10 -and
+    $summary.downloads_used_before_ticket -eq 0 -and
+    $summary.downloads_used_after_ticket -eq ($summary.downloads_used_before_ticket + 1)
   )
   if ($KeepFixture) {
     $summary.fixture = [ordered]@{

@@ -6,7 +6,24 @@ import { StatusMessage } from '../../components/StatusMessage'
 import { ProductDetailView } from '../redeem/ProductDetailView'
 import type { AdminActivity, AdminActivitySummary, JoinApplication, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductRelease, TenantMember } from '../../types'
 
-type AdminView = 'overview' | 'products' | 'codes' | 'applications' | 'members' | 'settings'
+const ADMIN_VIEWS = ['overview', 'products', 'codes', 'applications', 'members', 'settings'] as const
+type AdminView = (typeof ADMIN_VIEWS)[number]
+
+const ADMIN_VIEW_TITLES: Record<AdminView, string> = {
+  overview: '数据总览',
+  products: '商品创建',
+  codes: '兑换码管理',
+  applications: '成员申请',
+  members: '成员与权限',
+  settings: '部署设置',
+}
+
+const BASE_DOCUMENT_TITLE = '知屿 NOVER · 运营控制台'
+
+function readViewFromHash(): AdminView {
+  const raw = window.location.hash.replace(/^#\/?/, '').toLowerCase()
+  return (ADMIN_VIEWS as readonly string[]).includes(raw) ? raw as AdminView : 'overview'
+}
 
 export function AdminPage() {
   const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem('nover.operatorToken') ?? '')
@@ -15,7 +32,7 @@ export function AdminPage() {
   const [selectedId, setSelectedId] = useState('')
   const [creatingDraft, setCreatingDraft] = useState(false)
   const [createdCodes, setCreatedCodes] = useState<string[]>([])
-  const [view, setView] = useState<AdminView>('overview')
+  const [view, setView] = useState<AdminView>(readViewFromHash)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const queryClient = useQueryClient()
@@ -27,6 +44,28 @@ export function AdminPage() {
   useEffect(() => {
     if (products.data && !selectedId && !creatingDraft && products.data.items[0]) setSelectedId(products.data.items[0].id)
   }, [products.data, selectedId, creatingDraft])
+
+  useEffect(() => {
+    // Keep the active console view in the URL hash so browser back/forward and
+    // direct links work; unknown hashes fall back to the overview and get
+    // normalized through replaceState instead of pushing history entries.
+    const syncFromHash = () => setView(readViewFromHash())
+    const current = readViewFromHash()
+    if (window.location.hash !== `#${current}`) window.history.replaceState(null, '', `#${current}`)
+    window.addEventListener('hashchange', syncFromHash)
+    return () => window.removeEventListener('hashchange', syncFromHash)
+  }, [])
+
+  useEffect(() => {
+    document.title = `${ADMIN_VIEW_TITLES[view]} · ${BASE_DOCUMENT_TITLE}`
+  }, [view])
+
+  useEffect(() => () => { document.title = BASE_DOCUMENT_TITLE }, [])
+
+  function navigateView(next: AdminView) {
+    setView(next)
+    if (window.location.hash !== `#${next}`) window.location.hash = next
+  }
 
   const selectedProduct = products.data?.items.find((item) => item.id === selectedId)
 
@@ -66,7 +105,7 @@ export function AdminPage() {
   }
 
   function startDraft() {
-    setView('products')
+    navigateView('products')
     setSelectedId('')
     setCreatingDraft(true)
     setCreatedCodes([])
@@ -131,20 +170,20 @@ export function AdminPage() {
           <div className="eyebrow"><span className="eyebrow-line" /> OPERATOR CONSOLE</div>
           <h1 className="page-title">运营工作台</h1>
         </div>
-        <div className="operator-session"><div><span>{session.data?.username} · 当前空间</span><strong>{session.data?.tenant_name} · {roleLabel(session.data?.role)}</strong></div><button className="icon-button" title="退出运营账号" aria-label="退出运营账号" onClick={() => void disconnect()}><LockKeyhole size={18} /></button></div>
+        <div className="operator-session"><div><span>{session.data?.username} · 当前空间</span><strong>{session.data?.tenant_name} · {roleLabel(session.data?.role)}</strong></div><button className="icon-button" title="退出运营账号" aria-label="退出运营账号" onClick={() => void disconnect()}><LockKeyhole size={18} aria-hidden="true" /></button></div>
       </div>
 
       <nav className="admin-view-tabs" aria-label="运营功能">
         <span className="admin-nav-label">运营</span>
-        <button className={view === 'overview' ? 'is-active' : ''} onClick={() => setView('overview')}><LayoutDashboard size={16} />数据总览</button>
-        {hasPermission('product.write') && <button className={view === 'products' ? 'is-active' : ''} onClick={() => setView('products')}><PackagePlus size={16} />商品创建</button>}
-        {hasPermission('code.issue') && <button className={view === 'codes' ? 'is-active' : ''} onClick={() => setView('codes')}><TicketCheck size={16} />兑换码管理</button>}
+        <button className={view === 'overview' ? 'is-active' : ''} aria-current={view === 'overview' ? 'page' : undefined} onClick={() => navigateView('overview')}><LayoutDashboard size={16} aria-hidden="true" />数据总览</button>
+        {hasPermission('product.write') && <button className={view === 'products' ? 'is-active' : ''} aria-current={view === 'products' ? 'page' : undefined} onClick={() => navigateView('products')}><PackagePlus size={16} aria-hidden="true" />商品创建</button>}
+        {hasPermission('code.issue') && <button className={view === 'codes' ? 'is-active' : ''} aria-current={view === 'codes' ? 'page' : undefined} onClick={() => navigateView('codes')}><TicketCheck size={16} aria-hidden="true" />兑换码管理</button>}
         <span className="admin-nav-label">组织</span>
-        {hasPermission('application.read') && <button className={view === 'applications' ? 'is-active' : ''} onClick={() => setView('applications')}><UsersRound size={16} />成员申请</button>}
-        {hasPermission('member.read') && <button className={view === 'members' ? 'is-active' : ''} onClick={() => setView('members')}><ShieldCheck size={16} />成员与权限</button>}
+        {hasPermission('application.read') && <button className={view === 'applications' ? 'is-active' : ''} aria-current={view === 'applications' ? 'page' : undefined} onClick={() => navigateView('applications')}><UsersRound size={16} aria-hidden="true" />成员申请</button>}
+        {hasPermission('member.read') && <button className={view === 'members' ? 'is-active' : ''} aria-current={view === 'members' ? 'page' : undefined} onClick={() => navigateView('members')}><ShieldCheck size={16} aria-hidden="true" />成员与权限</button>}
         <span className="admin-nav-label">系统</span>
-        {hasPermission('settings.read') && <button className={view === 'settings' ? 'is-active' : ''} onClick={() => setView('settings')}><Settings2 size={16} />部署设置</button>}
-        <div className="admin-nav-context"><Building2 size={15} /><div><strong>身份与 RBAC 已启用</strong><span>商品与交付按当前空间隔离</span></div></div>
+        {hasPermission('settings.read') && <button className={view === 'settings' ? 'is-active' : ''} aria-current={view === 'settings' ? 'page' : undefined} onClick={() => navigateView('settings')}><Settings2 size={16} aria-hidden="true" />部署设置</button>}
+        <div className="admin-nav-context"><Building2 size={15} aria-hidden="true" /><div><strong>身份与 RBAC 已启用</strong><span>商品与交付按当前空间隔离</span></div></div>
       </nav>
 
       {view === 'overview' && <AdminOverview products={products.data?.items ?? []} summary={activity.data?.summary} loading={products.isLoading || activity.isLoading} />}
@@ -252,8 +291,8 @@ function ApplicationRow({ item, busy, canReview, onAction }: { item: JoinApplica
     <div className="application-meta"><span className={`status-pill application-status--${item.status.toLowerCase()}`}>{statusText}</span><small>{new Date(item.created_at).toLocaleString('zh-CN')}</small></div>
     <div className="application-actions">
       {canReview && item.status === 'PENDING' && <button className="button button-secondary" type="button" disabled={busy} onClick={() => onAction('REVIEW')}><Eye size={15} />进入审核</button>}
-      {canReview && (item.status === 'PENDING' || item.status === 'REVIEWING') && <button className="icon-button icon-button--small" type="button" title="通过资格审核" aria-label="通过资格审核" disabled={busy} onClick={() => onAction('APPROVE')}><UserCheck size={15} /></button>}
-      {canReview && (item.status === 'PENDING' || item.status === 'REVIEWING') && <button className="icon-button icon-button--small icon-button--danger" type="button" title="拒绝申请" aria-label="拒绝申请" disabled={busy} onClick={() => onAction('REJECT')}><X size={15} /></button>}
+      {canReview && (item.status === 'PENDING' || item.status === 'REVIEWING') && <button className="icon-button icon-button--small" type="button" title="通过资格审核" aria-label="通过资格审核" disabled={busy} onClick={() => onAction('APPROVE')}><UserCheck size={15} aria-hidden="true" /></button>}
+      {canReview && (item.status === 'PENDING' || item.status === 'REVIEWING') && <button className="icon-button icon-button--small icon-button--danger" type="button" title="拒绝申请" aria-label="拒绝申请" disabled={busy} onClick={() => onAction('REJECT')}><X size={15} aria-hidden="true" /></button>}
     </div>
   </article>
 }
@@ -381,8 +420,8 @@ function ActivityRow({ item, token, onChanged, onError }: { item: AdminActivity;
       <div className="activity-dates"><span>{item.redeemed_at ? `已兑换 ${new Date(item.redeemed_at).toLocaleDateString('zh-CN')}` : `兑换截止 ${new Date(item.code_expires_at).toLocaleDateString('zh-CN')}`}</span><span>{item.entitlement_until ? `权益至 ${new Date(item.entitlement_until).toLocaleDateString('zh-CN')}` : '尚未建立权益'}</span></div>
       <div className="activity-downloads"><strong>{item.downloads_issued}</strong><span>已签发下载票据</span><small>{item.download_events} 次文件请求</small></div>
       <div className="activity-actions">
-        {!terminal && <button className="icon-button icon-button--small" title={suspended ? '恢复兑换/交付' : '暂停兑换/交付'} aria-label={suspended ? '恢复兑换/交付' : '暂停兑换/交付'} disabled={mutation.isPending} onClick={() => mutation.mutate(suspended ? 'RESUME' : 'SUSPEND')}>{suspended ? <RotateCcw size={15} /> : <Pause size={15} />}</button>}
-        {!terminal && <button className="icon-button icon-button--small icon-button--danger" title="撤销兑换凭证" aria-label="撤销兑换凭证" disabled={mutation.isPending} onClick={revoke}><Ban size={15} /></button>}
+        {!terminal && <button className="icon-button icon-button--small" title={suspended ? '恢复兑换/交付' : '暂停兑换/交付'} aria-label={suspended ? '恢复兑换/交付' : '暂停兑换/交付'} disabled={mutation.isPending} onClick={() => mutation.mutate(suspended ? 'RESUME' : 'SUSPEND')}>{suspended ? <RotateCcw size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />}</button>}
+        {!terminal && <button className="icon-button icon-button--small icon-button--danger" title="撤销兑换凭证" aria-label="撤销兑换凭证" disabled={mutation.isPending} onClick={revoke}><Ban size={15} aria-hidden="true" /></button>}
       </div>
     </article>
   )
@@ -562,7 +601,7 @@ function AssetUpload({ token, productId, enabled, onUploaded, onError }: { token
     </form><div className="asset-list-header"><strong>已上传文件</strong><span>{assets.data?.items.length ?? 0} 个</span></div>
     {assets.isLoading ? <p className="field-note">正在读取文件…</p> : assets.isError ? <StatusMessage>{assets.error.message}</StatusMessage> : assets.data?.items.length ? <div className="asset-list">{assets.data.items.map((item) => {
       const status = releases.data?.items.find((release) => release.id === item.release_id)?.status
-      return <div className="asset-list-row" key={item.id}><div><strong title={item.file_name}>{item.file_name}</strong><span>{item.release_version || '历史交付'} · {(item.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {item.sha256.slice(0, 12)}…</span></div>{status === 'DRAFT' ? <button className="icon-button icon-button--small icon-button--danger" type="button" title="删除草稿文件" aria-label={`删除草稿文件 ${item.file_name}`} disabled={deleteMutation.isPending} onClick={() => { if (window.confirm(`删除草稿文件「${item.file_name}」？`)) deleteMutation.mutate(item.id) }}><Trash2 size={15} /></button> : <span className="asset-locked-label"><LockKeyhole size={13} />{status === 'PUBLISHED' ? '已发布' : '只读'}</span>}</div>
+      return <div className="asset-list-row" key={item.id}><div><strong title={item.file_name}>{item.file_name}</strong><span>{item.release_version || '历史交付'} · {(item.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {item.sha256.slice(0, 12)}…</span></div>{status === 'DRAFT' ? <button className="icon-button icon-button--small icon-button--danger" type="button" title="删除草稿文件" aria-label={`删除草稿文件 ${item.file_name}`} disabled={deleteMutation.isPending} onClick={() => { if (window.confirm(`删除草稿文件「${item.file_name}」？`)) deleteMutation.mutate(item.id) }}><Trash2 size={15} aria-hidden="true" /></button> : <span className="asset-locked-label"><LockKeyhole size={13} />{status === 'PUBLISHED' ? '已发布' : '只读'}</span>}</div>
     })}</div> : <p className="field-note">当前商品尚未上传交付文件。</p>}</div>
   )
 }
@@ -700,7 +739,7 @@ function ProductImageManager({ productId, productName, productStatus, token, onU
       <p className="field-note">支持 JPEG / PNG，单张最大 8 MB。草稿图仅在工作台预览，发布后才会公开展示。</p>
       <button className="button button-secondary" type="button" disabled={!editable || !file || uploadMutation.isPending} onClick={() => uploadMutation.mutate()}><ImagePlus size={16} />{uploadMutation.isPending ? '上传中…' : '添加效果图'}</button>
       {!productId ? <div className="empty-state">先从商品目录选择一个商品。</div> : images.isLoading ? <div className="empty-state">正在读取效果图…</div> : images.isError ? <StatusMessage>{images.error.message}</StatusMessage> : images.data?.items.length ? (
-        <div className="managed-image-grid">{images.data.items.map((image) => <article className="managed-image" key={image.id}>{imageURLs[image.id] ? <img src={imageURLs[image.id]} alt={image.alt_text || productName} /> : <div className="managed-image-loading">读取中…</div>}<div><span>{image.alt_text || productName}</span><button className="icon-button icon-button--small icon-button--danger" type="button" aria-label="删除效果图" title="删除效果图" disabled={!editable || deleteMutation.isPending} onClick={() => removeImage(image.id, image.alt_text)}><Trash2 size={14} /></button></div></article>)}</div>
+        <div className="managed-image-grid">{images.data.items.map((image) => <article className="managed-image" key={image.id}>{imageURLs[image.id] ? <img src={imageURLs[image.id]} alt={image.alt_text || productName} /> : <div className="managed-image-loading">读取中…</div>}<div><span>{image.alt_text || productName}</span><button className="icon-button icon-button--small icon-button--danger" type="button" aria-label="删除效果图" title="删除效果图" disabled={!editable || deleteMutation.isPending} onClick={() => removeImage(image.id, image.alt_text)}><Trash2 size={14} aria-hidden="true" /></button></div></article>)}</div>
       ) : <div className="empty-state">此商品还没有效果图。</div>}
     </div>
   )

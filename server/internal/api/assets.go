@@ -134,7 +134,8 @@ func (a *App) deleteDraftAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
-	if !a.allowRequest(r, "upload", 30, time.Minute) {
+	if allowed, retry := a.allowRequest(r, "upload", 30, time.Minute); !allowed {
+		setRetryAfter(w, retry)
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Please wait before uploading more files.")
 		return
 	}
@@ -293,7 +294,8 @@ func (a *App) uploadAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) createDownloadTicket(w http.ResponseWriter, r *http.Request) {
-	if !a.allowRequest(r, "ticket", 60, time.Minute) {
+	if allowed, retry := a.allowRequest(r, "ticket", 60, time.Minute); !allowed {
+		setRetryAfter(w, retry)
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Please wait before requesting another download.")
 		return
 	}

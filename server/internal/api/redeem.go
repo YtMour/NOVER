@@ -10,7 +10,8 @@ import (
 )
 
 func (a *App) redeem(w http.ResponseWriter, r *http.Request) {
-	if !a.allowRequest(r, "redeem", 12, time.Minute) {
+	if allowed, retry := a.allowRequest(r, "redeem", 12, time.Minute); !allowed {
+		setRetryAfter(w, retry)
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many attempts. Please wait and try again.")
 		return
 	}
@@ -111,6 +112,8 @@ func (a *App) delivery(w http.ResponseWriter, r *http.Request) {
 	var result struct {
 		EntitlementID string    `json:"entitlement_id"`
 		ValidUntil    time.Time `json:"valid_until"`
+		MaxDownloads  int       `json:"max_downloads"`
+		DownloadsUsed int       `json:"downloads_used"`
 		BaseReleaseID string    `json:"base_release_id,omitempty"`
 		BaseVersion   string    `json:"base_version,omitempty"`
 		Product       product   `json:"product"`
@@ -118,7 +121,7 @@ func (a *App) delivery(w http.ResponseWriter, r *http.Request) {
 	}
 	result.Assets = make([]asset, 0)
 	var tenantID string
-	err := a.db.QueryRow(r.Context(), `SELECT e.id, e.tenant_id, e.valid_until, COALESCE(e.release_id, ''), COALESCE(base.version, ''), p.id, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+` FROM entitlements e JOIN tenants t ON t.id=e.tenant_id AND t.status='ACTIVE' JOIN products p ON p.id=e.product_id AND p.tenant_id=e.tenant_id LEFT JOIN product_releases base ON base.id=e.release_id AND base.tenant_id=e.tenant_id WHERE e.access_token_hash=$1 AND e.status='ACTIVE' AND e.valid_until>NOW()`, hashToken(token)).Scan(&result.EntitlementID, &tenantID, &result.ValidUntil, &result.BaseReleaseID, &result.BaseVersion, &result.Product.ID, &result.Product.Name, &result.Product.Description, &result.Product.Detail, &result.Product.Status, &result.Product.CurrentReleaseVersion, &result.Product.CurrentReleaseChangelog)
+	err := a.db.QueryRow(r.Context(), `SELECT e.id, e.tenant_id, e.valid_until, e.max_downloads, e.downloads_issued, COALESCE(e.release_id, ''), COALESCE(base.version, ''), p.id, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+` FROM entitlements e JOIN tenants t ON t.id=e.tenant_id AND t.status='ACTIVE' JOIN products p ON p.id=e.product_id AND p.tenant_id=e.tenant_id LEFT JOIN product_releases base ON base.id=e.release_id AND base.tenant_id=e.tenant_id WHERE e.access_token_hash=$1 AND e.status='ACTIVE' AND e.valid_until>NOW()`, hashToken(token)).Scan(&result.EntitlementID, &tenantID, &result.ValidUntil, &result.MaxDownloads, &result.DownloadsUsed, &result.BaseReleaseID, &result.BaseVersion, &result.Product.ID, &result.Product.Name, &result.Product.Description, &result.Product.Detail, &result.Product.Status, &result.Product.CurrentReleaseVersion, &result.Product.CurrentReleaseChangelog)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusUnauthorized, "delivery_auth_invalid", "The delivery session is invalid or expired.")
 		return

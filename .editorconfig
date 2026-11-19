@@ -1,0 +1,34 @@
+root = true
+
+# 默认：UTF-8、LF、文件末尾换行、空格缩进 2 格。
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Go：gofmt 使用 tab。
+[*.go]
+indent_style = tab
+indent_size = 4
+
+# 前端与数据/配置/文档统一 2 空格。
+[*.{ts,tsx,js,jsx,css,json,jsonc,yml,yaml,html,svg}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false
+
+# Windows PowerShell 5.1 必须能正确读取中文，脚本使用 UTF-8 BOM + LF。
+[*.{ps1,psm1,psd1}]
+charset = utf-8-bom
+indent_style = space
+indent_size = 2
+
+[Makefile]
+indent_style = tab

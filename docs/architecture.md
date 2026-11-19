@@ -64,7 +64,7 @@ ReactBits 是可复制组件集合，不是本 MVP 使用的 npm 运行时依赖
 | HTTP | `go-chi/chi` | 轻量、贴近标准库，适合模块化单体 |
 | PostgreSQL | `pgx` | 原生协议能力完整，连接池和事务控制清晰 |
 | 查询 | MVP 使用 `pgx` 参数化 SQL；后续可评估 `sqlc` | 当前 schema 和查询规模较小，先保持 SQL 直接可审查 |
-| 迁移 | MVP 启动时执行幂等 schema；生产化前采用版本化迁移 | 当前适合新库初始化，不足以管理有数据的结构演进 |
+| 迁移 | 内嵌版本化迁移（`migrations/*.sql` + `schema_migrations` 校验和） | 历史安装自动识别基线，结构演进可审计、可回滚 |
 | 日志 | `log/slog` | 标准库结构化日志，减少基础依赖 |
 | 配置 | 环境变量 + typed config | 适合 Docker Compose 和生产密钥注入 |
 
@@ -121,13 +121,16 @@ server/
     clock/              可测试时间源
 ```
 
-当前实现尚未拆成上述模块，也没有 Redis cache 接口；本地私有存储使用 `STORAGE_DIR` 配置，MVP 限流保存在进程内。商品支持草稿、实时买家页预览、内容编辑、发布、下架和归档；版本草稿、版本文件绑定、版本发布和更新权益已实现。
+当前实现尚未拆成上述模块，也没有 Redis cache 接口；本地私有存储使用 `STORAGE_DIR` 配置，MVP 限流保存在进程内。商品支持草稿、实时买家页预览、内容编辑、发布、下架和归档；版本草稿、版本文件绑定、版本发布和更新权益已实现。启动时自动执行版本化迁移（`server/internal/db/migrations/`）并记录校验和，历史幂等 schema 安装会被识别为基线；独立命令 `cmd/maintenance` 负责过期会话、票据、权益与孤儿文件清理；`internal/buildinfo` 注入版本信息并通过 `/api/v1/meta` 暴露；每个 API 请求输出结构化访问日志并返回 `X-Request-Id`。
 
 ## 5. 当前数据库模型
 
 ```text
 tenants
   id, name, slug, status, created_at, updated_at
+
+schema_migrations
+  version, name, checksum, applied_at
 
 operator_users
   id, username, display_name, password_hash, platform_role, status,
@@ -237,13 +240,16 @@ MVP 上传不执行病毒扫描、归档解包检查或内容审查。
 
 MVP 使用 `private-assets` Docker 卷保存文件，应用数据库只记录对象键和元数据。生产化阶段应实现 S3 适配、私有桶和签名 URL。
 
+交付接口同时返回 `max_downloads` 与 `downloads_used`，前端据此展示额度并阻止超额下载；额度在签发票据时扣减。票据过期记录、过期权益与孤儿文件由 `cmd/maintenance` 保守清理：默认干跑，`-apply` 才删除/标记，文件仅在无数据库引用且超过 24 小时时移除。下载票据 5 分钟内可重复使用，额度按签发票据计数。
+
 ## 8. 安全边界
 
 - MVP 运营工作台使用 bcrypt 数据库密码换取 8 小时 HMAC 会话；服务端逐请求确认账号、成员关系、租户、角色和撤销状态。公开申请的期望密码同样只保存 bcrypt 哈希，待审成员可以登录但权限集合为空。开发首次启动引导 `admin/admin`，生产版本拒绝默认凭证并需接入正式 MFA。
 - 管理后台与公开兑换 API 使用不同权限中间件。
 - 兑换码只保存 HMAC/哈希；密钥从环境变量或密钥管理系统注入。
 - MVP 记录商品创建、文件上传、兑换码签发、凭证状态变更和下载开始事件；业务审计事件已绑定当前租户，退款联动与审计检索仍待实现。
-- 兑换、票据签发和上传有进程内按 IP 限流；重启会清空计数，多实例需要共享限流方案。
+- 每个 API 请求输出结构化访问日志（`request_id`、`method`、`path`、`route`、`status`、`duration_ms`、`ip`），响应头返回 `X-Request-Id`；健康检查不写访问日志。`/api/v1/meta` 公开版本、提交与环境信息。
+- 兑换、票据签发和上传有进程内按 IP 限流；超限返回 `429` 与 `Retry-After` 秒数。重启会清空计数，多实例需要共享限流方案。
 - 下载事件当前不记录 IP 或 User-Agent。
 - Compose 卷持久化数据；备份与恢复流程仍待实现。
 - `APP_ENV=production` 会拒绝仓库提供的示例密钥；管理员令牌、兑换 HMAC 和访问令牌密钥需分别生成并保管。
@@ -253,10 +259,11 @@ MVP 使用 `private-assets` Docker 卷保存文件，应用数据库只记录对
 当前 Compose 服务：
 
 ```text
-web       用户端 React 静态资源，默认 :45173
-console   运营端 React 静态资源，默认 :46173
-api       Go API，默认 :48080
-db        PostgreSQL，默认仅回环 :5433
+web         用户端 React 静态资源，默认 :45173
+console     运营端 React 静态资源，默认 :46173
+api         Go API，默认 :48080
+db          PostgreSQL，默认仅回环 :5433
+maintenance 维护清理命令（Compose ops profile，按需运行）
 ```
 
 `web` 与 `console` 各自包含 Nginx 静态服务和 `/api` 反向代理。两个静态镜像独立构建；用户端镜像不包含运营页面。Compose 当前仅绑定到 loopback，不包含公网 TLS 终止。
@@ -275,6 +282,10 @@ MVP 使用 `private-assets` Docker 卷，适合单实例功能验证。后续可
 | 限额和短时下载票据 | 已实现 |
 | 商品版本、版本文件与更新权限 | 已实现；发布版本必须有文件，基础版本被签发后不可撤回 |
 | 数据库运营账号与可撤销会话 | 已实现；TOTP/Passkey、密码重置待实现 |
+| 版本化数据库迁移与校验和 | 已实现；历史安装自动基线与回滚 |
+| 维护清理命令（会话/票据/权益/孤儿文件） | 已实现；自动调度待接入 |
+| 结构化访问日志、请求 ID 与构建信息 | 已实现 |
+| CI、跨平台 QA 与一键验证 | 已实现 |
 | S3 对象存储和文件扫描 | 待实现 |
 | 凭证暂停、恢复、撤销及活动记录 | 已实现 |
 | 退款联动、审计检索和备份恢复 | 待实现 |

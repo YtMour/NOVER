@@ -31,7 +31,8 @@ func inspectProductImage(data []byte) (string, string, error) {
 }
 
 func (a *App) uploadProductImage(w http.ResponseWriter, r *http.Request) {
-	if !a.allowRequest(r, "product-image-upload", 30, time.Minute) {
+	if allowed, retry := a.allowRequest(r, "product-image-upload", 30, time.Minute); !allowed {
+		setRetryAfter(w, retry)
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Please wait before uploading more images.")
 		return
 	}

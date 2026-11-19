@@ -7,10 +7,26 @@ export class ApiError extends Error {
     message: string,
     readonly code: string,
     readonly status: number,
+    readonly retryAfter?: number,
   ) {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+const NETWORK_ERROR_MESSAGE = '网络连接异常，请检查网络后重试。'
+
+function parseRetryAfter(response: Response): number | undefined {
+  if (response.status !== 429) return undefined
+  const header = response.headers.get('Retry-After')
+  if (!header) return undefined
+  const seconds = Number(header.trim())
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined
+  return Math.ceil(seconds)
+}
+
+function rateLimitMessage(message: string, retryAfter?: number) {
+  return retryAfter === undefined ? `${message} 请稍后重试。` : `${message} 请 ${retryAfter} 秒后重试。`
 }
 
 function apiURL(path: string) {
@@ -56,13 +72,21 @@ function operatorEndpoint(path: string) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiURL(path), init)
+  let response: Response
+  try {
+    response = await fetch(apiURL(path), init)
+  } catch {
+    throw new ApiError(NETWORK_ERROR_MESSAGE, 'network_error', 0)
+  }
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
+    const retryAfter = parseRetryAfter(response)
+    const message = payload.message ?? '请求暂时没有完成。'
     throw new ApiError(
-      payload.message ?? '请求暂时没有完成。',
+      response.status === 429 ? rateLimitMessage(message, retryAfter) : message,
       payload.code ?? 'request_failed',
       response.status,
+      retryAfter,
     )
   }
   return payload as T
@@ -168,10 +192,22 @@ export function loadProductImages(token: string, productId: string) {
 }
 
 export async function loadProductImageBlob(token: string, productId: string, imageId: string) {
-  const response = await fetch(apiURL(operatorEndpoint(`/products/${productId}/images/${imageId}`)), { headers: withBearer(token) })
+  let response: Response
+  try {
+    response = await fetch(apiURL(operatorEndpoint(`/products/${productId}/images/${imageId}`)), { headers: withBearer(token) })
+  } catch {
+    throw new ApiError(NETWORK_ERROR_MESSAGE, 'network_error', 0)
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}))
-    throw new ApiError(payload.message ?? '图片暂时没有读取成功。', payload.code ?? 'image_load_failed', response.status)
+    const retryAfter = parseRetryAfter(response)
+    const message = payload.message ?? '图片暂时没有读取成功。'
+    throw new ApiError(
+      response.status === 429 ? rateLimitMessage(message, retryAfter) : message,
+      payload.code ?? 'image_load_failed',
+      response.status,
+      retryAfter,
+    )
   }
   return response.blob()
 }

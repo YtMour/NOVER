@@ -1,0 +1,35 @@
+# 仓库文本统一以 LF 存储与检出，避免 Windows 工作区把整文件标记为已修改。
+# 现有受版本控制的文件在 index 中已是 LF（见 git ls-files --eol），本文件不会触发重新规范化。
+* text=auto eol=lf
+
+# 二进制资源：禁止行尾转换与文本 diff。
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.svgz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.7z binary
+*.tar binary
+*.tar.gz binary
+*.gz binary
+
+# 明确文本文件类型，保持 LF。
+*.go text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sql text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=lf

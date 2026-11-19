@@ -54,6 +54,8 @@ export type Asset = {
 export type Delivery = {
   entitlement_id: string
   valid_until: string
+  max_downloads?: number
+  downloads_used?: number
   product: Product
   assets: Asset[]
 }

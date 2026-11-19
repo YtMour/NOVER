@@ -44,23 +44,25 @@ function Shell() {
 
   return (
     <div className="app-shell">
+      <SkipLink />
       <header className="topbar">
         <NavLink to={currentPath.startsWith('/spaces/') ? `/spaces/${currentPath.split('/')[2]}` : '/'} className="brand-link" aria-label="NOVER 首页"><BrandMark /></NavLink>
         <nav className="top-navigation" aria-label="主导航">
           <NavLink to={currentPath.startsWith('/spaces/') ? `/spaces/${currentPath.split('/')[2]}` : '/'} end className={({ isActive }) => `nav-link ${isActive ? 'is-active' : ''}`}>交付门户</NavLink>
         </nav>
-        <NavLink to="/join" className={({ isActive }) => `join-link ${isActive ? 'is-active' : ''}`}><UserPlus size={15} /><span>加入我们</span></NavLink>
+        <NavLink to="/join" className={({ isActive }) => `join-link ${isActive ? 'is-active' : ''}`}><UserPlus size={15} aria-hidden="true" /><span>加入我们</span></NavLink>
         <button
           className="theme-toggle"
           type="button"
           aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到暗色模式'}
+          aria-pressed={theme === 'dark'}
           title={theme === 'dark' ? '切换到浅色模式' : '切换到暗色模式'}
           onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
         >
-          {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+          {theme === 'dark' ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
         </button>
       </header>
-      <main className="main-content">
+      <main className="main-content" id="main" tabIndex={-1}>
         <PageMotion>
           <Suspense fallback={<div className="loading-line">正在打开页面…</div>}>
             <Routes>
@@ -80,6 +82,23 @@ function Shell() {
         <span className={`footer-status ${health.isError ? 'footer-status--offline' : ''}`}><i />{health.isLoading ? '正在连接' : health.isError ? '服务暂不可用' : '交付服务在线'}</span>
       </footer>
     </div>
+  )
+}
+
+function SkipLink() {
+  return (
+    <a
+      className="skip-link"
+      href="#main"
+      onClick={(event) => {
+        event.preventDefault()
+        const main = document.getElementById('main')
+        main?.focus()
+        main?.scrollIntoView({ block: 'start' })
+      }}
+    >
+      跳到主要内容
+    </a>
   )
 }
 

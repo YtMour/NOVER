@@ -27,16 +27,17 @@ export default function App() {
   }, [theme])
 
   return <div className="console-shell">
+    <SkipLink />
     <header className="console-topbar">
       <div className="console-brand"><BrandMark /><span>运营控制台</span></div>
       <div className="console-runtime">
-        <span className={health.isError ? 'is-offline' : ''}><Server size={14} />{health.isLoading ? '正在连接 API' : health.isError ? 'API 连接异常' : 'API 已连接'}</span>
-        <button className="theme-toggle" type="button" aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到暗色模式'} title={theme === 'dark' ? '切换到浅色模式' : '切换到暗色模式'} onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}>
-          {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+        <span className={health.isError ? 'is-offline' : ''}><Server size={14} aria-hidden="true" />{health.isLoading ? '正在连接 API' : health.isError ? 'API 连接异常' : 'API 已连接'}</span>
+        <button className="theme-toggle" type="button" aria-label={theme === 'dark' ? '切换到浅色模式' : '切换到暗色模式'} aria-pressed={theme === 'dark'} title={theme === 'dark' ? '切换到浅色模式' : '切换到暗色模式'} onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}>
+          {theme === 'dark' ? <Sun size={17} aria-hidden="true" /> : <Moon size={17} aria-hidden="true" />}
         </button>
       </div>
     </header>
-    <main className="console-content">
+    <main className="console-content" id="main" tabIndex={-1}>
       <Suspense fallback={<div className="loading-line">正在打开运营控制台…</div>}>
         <Routes>
           <Route path={OPERATOR_PATH} element={<AdminPage />} />
@@ -46,4 +47,21 @@ export default function App() {
       </Suspense>
     </main>
   </div>
+}
+
+function SkipLink() {
+  return (
+    <a
+      className="skip-link"
+      href="#main"
+      onClick={(event) => {
+        event.preventDefault()
+        const main = document.getElementById('main')
+        main?.focus()
+        main?.scrollIntoView({ block: 'start' })
+      }}
+    >
+      跳到主要内容
+    </a>
+  )
 }

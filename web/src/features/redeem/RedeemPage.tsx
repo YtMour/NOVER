@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { ArrowDown, ArrowRight, ArrowUpRight, Download, KeyRound, ShieldCheck, ShoppingBag } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUpRight, Download, KeyRound, Search, ShieldCheck, ShoppingBag, X } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { loadPublicProducts, redeemCode } from '../../lib/api'
@@ -12,6 +12,12 @@ export function RedeemPage() {
   const { spaceSlug } = useParams()
   const products = useQuery({ queryKey: ['public-products', spaceSlug], queryFn: () => loadPublicProducts(spaceSlug) })
   const productCount = products.data ? String(products.data.items.length).padStart(2, '0') : '—'
+  const [search, setSearch] = useState('')
+  const catalogItems = products.data?.items ?? []
+  const normalizedSearch = search.trim().toLowerCase()
+  const filteredProducts = normalizedSearch
+    ? catalogItems.filter((product) => product.name.toLowerCase().includes(normalizedSearch) || (product.description ?? '').toLowerCase().includes(normalizedSearch))
+    : catalogItems
   const mutation = useMutation({
     mutationFn: redeemCode,
     onSuccess: ({ access_token }) => {
@@ -33,8 +39,8 @@ export function RedeemPage() {
           <h1>探索数字，<br /><span>发现更多可能。</span></h1>
           <p className="home-lead">{spaceSlug && products.data?.space_name ? `${products.data.space_name} 的数字产品空间。` : '知屿是一个安静、可靠的数字产品空间。'}我们把独立软件、源码与创意资源整理成清晰的交付体验。</p>
           <div className="hero-actions">
-            <a className="button button-primary" href="#catalog">浏览产品 <ArrowDown size={16} /></a>
-            <a className="text-action" href="#redeem">已有兑换码 <ArrowRight size={15} /></a>
+            <a className="button button-primary" href="#catalog">浏览产品 <ArrowDown size={16} aria-hidden="true" /></a>
+            <a className="text-action" href="#redeem">已有兑换码 <ArrowRight size={15} aria-hidden="true" /></a>
           </div>
           <div className="hero-assurance"><ShieldCheck size={17} /><span>一次购买，获得清晰、可追踪的数字交付。</span></div>
         </div>
@@ -46,10 +52,28 @@ export function RedeemPage() {
           <div><div className="eyebrow"><span className="eyebrow-line" /> SELECTED COLLECTION</div><h2>正在交付的产品</h2></div>
           <span className="section-side-note">{productCount} PRODUCTS · 精选数字工具与创作资源</span>
         </div>
-        {products.isError ? <div className="catalog-error"><StatusMessage kind="info">产品目录暂时无法加载，兑换入口仍可正常使用。</StatusMessage><button type="button" className="button button-secondary" onClick={() => void products.refetch()} disabled={products.isFetching}>{products.isFetching ? '正在重新连接…' : '重新加载目录'} <ArrowRight size={15} /></button></div> : products.isLoading ? <div className="catalog-loading">正在整理产品目录…</div> : products.data?.items.length ? (
-          <div className="product-grid">
-            {products.data.items.map((product, index) => <ProductCard key={product.id} product={product} index={index} spaceSlug={spaceSlug} />)}
-          </div>
+        {products.isError ? <div className="catalog-error"><StatusMessage kind="info">产品目录暂时无法加载，兑换入口仍可正常使用。</StatusMessage><button type="button" className="button button-secondary" onClick={() => void products.refetch()} disabled={products.isFetching}>{products.isFetching ? '正在重新连接…' : '重新加载目录'} <ArrowRight size={15} aria-hidden="true" /></button></div> : products.isLoading ? <div className="catalog-loading">正在整理产品目录…</div> : catalogItems.length ? (
+          <>
+            <div className="catalog-toolbar">
+              <div className="catalog-search">
+                <Search size={15} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="搜索产品名称或简介"
+                  aria-label="搜索产品名称或简介"
+                />
+                {search && <button type="button" className="catalog-search-clear" onClick={() => setSearch('')}><X size={13} aria-hidden="true" />清空</button>}
+              </div>
+              <span className="catalog-result-count" role="status" aria-live="polite">显示 {filteredProducts.length} / {catalogItems.length}</span>
+            </div>
+            {filteredProducts.length ? (
+              <div className="product-grid">
+                {filteredProducts.map((product, index) => <ProductCard key={product.id} product={product} index={index} spaceSlug={spaceSlug} />)}
+              </div>
+            ) : <div className="catalog-empty">没有找到与「{search.trim()}」匹配的产品，试试其他关键词。</div>}
+          </>
         ) : <div className="catalog-empty">当前没有公开商品，稍后再来看看。</div>}
       </section>
 
@@ -93,7 +117,7 @@ function ProductCard({ product, index, spaceSlug }: { product: { id: string; nam
   const fallback = getProductVisual(product.id, index)
   return <Link to={spaceSlug ? `/spaces/${spaceSlug}/products/${product.id}` : `/products/${product.id}`} className={`product-card product-card--${index % 3}`}>
     <div className="product-card-cover"><img src={cover?.url ?? fallback.src} alt={cover?.alt_text || fallback.alt} loading={index === 0 ? 'eager' : 'lazy'} /><span>数字产品</span></div>
-    <div className="product-card-copy"><div className="product-card-top"><span className="product-index">0{index + 1}</span><ArrowUpRight size={16} /></div><h3>{product.name}</h3><p>{product.description || '数字产品交付资源。'}</p><div className="product-card-foot"><span>查看商品详情</span><span>NOVER / {product.id.slice(0, 6).toUpperCase()}</span></div></div>
+    <div className="product-card-copy"><div className="product-card-top"><span className="product-index">0{index + 1}</span><ArrowUpRight size={16} aria-hidden="true" /></div><h3>{product.name}</h3><p>{product.description || '数字产品交付资源。'}</p><div className="product-card-foot"><span>查看商品详情</span><span>NOVER / {product.id.slice(0, 6).toUpperCase()}</span></div></div>
   </Link>
 }
 

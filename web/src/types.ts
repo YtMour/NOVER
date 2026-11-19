@@ -36,6 +36,8 @@ export type Asset = {
 export type Delivery = {
   entitlement_id: string
   valid_until: string
+  max_downloads?: number
+  downloads_used?: number
   base_release_id?: string
   base_version?: string
   product: Product

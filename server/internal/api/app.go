@@ -26,11 +26,13 @@ func (a *App) Handler() http.Handler {
 	operatorPath := "/" + a.cfg.OperatorAPIPath
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
+	r.Use(a.requestLogger)
 	r.Use(middleware.Recoverer)
 	r.Use(a.cors)
 	r.Get("/healthz", a.health)
 	r.Get("/readyz", a.ready)
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/meta", a.meta)
 		r.Get("/products", a.listPublicProducts)
 		r.Get("/products/{productID}/images/{imageID}", a.serveProductImage)
 		r.Get("/spaces/{spaceSlug}/products", a.listSpaceProducts)

@@ -1,9 +1,18 @@
-param([switch]$KeepFixture)
+﻿param([switch]$KeepFixture)
+
+# 租户隔离与商户交付冒烟脚本。
+# 兼容 Windows PowerShell 5.1、PowerShell 7 和 Linux：
+# - 上传文件使用外部 curl（Windows 用 curl.exe），检查退出码与 HTTP 状态后 ConvertFrom-Json；
+# - Invoke-WebRequest 统一加 -UseBasicParsing（Windows PowerShell 5.1 无 IE 引擎时必需）；
+# - 路径全部用 Join-Path 拼接，临时目录用 [IO.Path]::GetTempPath()；
+# - 文件保持 UTF-8 BOM + LF，保证 Windows PowerShell 5.1 能正确读取中文。
 
 $ErrorActionPreference = 'Stop'
 $base = 'http://127.0.0.1:48080'
 $operatorPath = 'cp-7f3c'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+. (Join-Path $PSScriptRoot 'curl-upload.ps1')
+
 $envMap = @{}
 Get-Content (Join-Path $repoRoot '.env') | ForEach-Object { if ($_ -match '^([^#=]+)=(.*)$') { $envMap[$matches[1]] = $matches[2] } }
 $adminUser = if ($envMap['ADMIN_USERNAME']) { $envMap['ADMIN_USERNAME'] } else { 'admin' }
@@ -11,10 +20,12 @@ $adminPass = if ($envMap['ADMIN_PASSWORD']) { $envMap['ADMIN_PASSWORD'] } else {
 $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $username = "qa$stamp"
 $password = "Qa-only-$stamp!"
-$file = Join-Path $env:TEMP "nover-tenant-$stamp.txt"
-$imageFile = Join-Path $env:TEMP "nover-tenant-$stamp.png"
+$tempDir = [System.IO.Path]::GetTempPath()
+$file = Join-Path $tempDir "nover-tenant-$stamp.txt"
+$imageFile = Join-Path $tempDir "nover-tenant-$stamp.png"
 $application = $null
 $product = $null
+$image = $null
 $asset = $null
 
 function Api([string]$method, [string]$path, $body = $null, $headers = $null) {
@@ -45,11 +56,11 @@ try {
   $merchantHeaders = @{ Authorization = "Bearer $($merchant.access_token)" }
   $product = Api POST "/api/v1/$operatorPath/products" @{ name = "QA Merchant Product $stamp"; description = 'Synthetic merchant delivery'; detail = 'Tenant-isolated test'; status = 'DRAFT' } $merchantHeaders
   [IO.File]::WriteAllBytes($imageFile, [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9aO2sAAAAASUVORK5CYII='))
-  $image = Invoke-RestMethod -Method Post -Uri "$base/api/v1/$operatorPath/products/$($product.id)/images" -Headers $merchantHeaders -Form @{ file = Get-Item $imageFile; alt_text = 'Synthetic preview' }
+  $image = Invoke-CurlFileUpload -Uri "$base/api/v1/$operatorPath/products/$($product.id)/images" -FilePath $imageFile -Headers $merchantHeaders -Fields @{ alt_text = 'Synthetic preview' }
   Api PUT "/api/v1/$operatorPath/products/$($product.id)" @{ name = $product.name; description = $product.description; detail = "![Synthetic preview](/api/v1/products/$($product.id)/images/$($image.id))" } $merchantHeaders | Out-Null
   $release = Api POST "/api/v1/$operatorPath/products/$($product.id)/releases" @{ version = '1.0.0'; changelog = 'First merchant release' } $merchantHeaders
   Set-Content -LiteralPath $file -Value 'Synthetic tenant delivery file' -Encoding utf8
-  $asset = Invoke-RestMethod -Method Post -Uri "$base/api/v1/$operatorPath/products/$($product.id)/assets" -Headers $merchantHeaders -Form @{ release_id = $release.id; file = Get-Item $file }
+  $asset = Invoke-CurlFileUpload -Uri "$base/api/v1/$operatorPath/products/$($product.id)/assets" -FilePath $file -Headers $merchantHeaders -Fields @{ release_id = $release.id }
   Api POST "/api/v1/$operatorPath/products/$($product.id)/status" @{ status = 'ACTIVE' } $merchantHeaders | Out-Null
   Api POST "/api/v1/$operatorPath/products/$($product.id)/releases/$($release.id)/status" @{ status = 'PUBLISHED' } $merchantHeaders | Out-Null
   $issued = Api POST "/api/v1/$operatorPath/products/$($product.id)/codes" @{ count = 1; release_id = $release.id; code_ttl_days = 7; access_days = 30; max_downloads = 2; external_order_ref = "qa-$stamp" } $merchantHeaders
@@ -57,7 +68,7 @@ try {
   $delivery = Api GET '/api/v1/delivery' $null @{ Authorization = "Bearer $($redeemed.access_token)" }
   $merchantSpace = Api GET "/api/v1/spaces/$($merchant.session.tenant_slug)/products"
   $spaceImage = "/api/v1/spaces/$($merchant.session.tenant_slug)/products/$($product.id)/images/$($image.id)"
-  $imageResponse = Invoke-WebRequest -Method Get -Uri "$base$spaceImage"
+  $imageResponse = Invoke-WebRequest -Method Get -Uri "$base$spaceImage" -UseBasicParsing
   $wrongSpaceImage = ErrorCode { Api GET "/api/v1/spaces/default/products/$($product.id)/images/$($image.id)" }
   $defaultSpace = Api GET '/api/v1/products'
   $adminFiles = ErrorCode { Api GET "/api/v1/$operatorPath/products/$($product.id)/assets" $null $adminHeaders }

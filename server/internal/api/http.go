@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -88,7 +90,10 @@ func newRateLimiter() *rateLimiter {
 	return &rateLimiter{entries: make(map[string]rateEntry)}
 }
 
-func (l *rateLimiter) allow(key string, limit int, window time.Duration) bool {
+// allow reports whether the request may proceed. When denied, the second
+// return value is how long the caller should wait before retrying so the API
+// can answer with a Retry-After header.
+func (l *rateLimiter) allow(key string, limit int, window time.Duration) (bool, time.Duration) {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -100,24 +105,39 @@ func (l *rateLimiter) allow(key string, limit int, window time.Duration) bool {
 		}
 		l.lastCleanup = now
 	}
-	entry := l.entries[key]
-	if now.Sub(entry.start) >= window {
-		if _, exists := l.entries[key]; !exists && len(l.entries) >= 50_000 {
-			return false
+	entry, exists := l.entries[key]
+	if !exists || now.Sub(entry.start) >= window {
+		if !exists && len(l.entries) >= 50_000 {
+			return false, window
 		}
 		l.entries[key] = rateEntry{count: 1, start: now, window: window}
-		return true
+		return true, 0
 	}
 	if entry.count >= limit {
-		return false
+		retry := window - now.Sub(entry.start)
+		if retry <= 0 {
+			retry = time.Second
+		}
+		return false, retry
 	}
 	entry.count++
 	l.entries[key] = entry
-	return true
+	return true, 0
 }
 
-func (a *App) allowRequest(r *http.Request, bucket string, limit int, window time.Duration) bool {
+func (a *App) allowRequest(r *http.Request, bucket string, limit int, window time.Duration) (bool, time.Duration) {
 	return a.limit.allow(bucket+":"+clientAddress(r.RemoteAddr), limit, window)
+}
+
+// setRetryAfter advertises the rate-limit window so clients and agents can back
+// off deterministically instead of retrying immediately.
+func setRetryAfter(w http.ResponseWriter, retry time.Duration) int {
+	seconds := int(math.Ceil(retry.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	return seconds
 }
 
 func clientAddress(remoteAddr string) string {
@@ -140,4 +160,27 @@ func constantTimeEqual(a, b string) bool {
 
 func (a *App) logError(r *http.Request, message string, err error) {
 	a.logger.Error(message, "request_id", middleware.GetReqID(r.Context()), "error", err)
+}
+
+// parsePagination validates limit/offset query parameters for list endpoints.
+// Invalid values are rejected instead of silently clamped so API clients and
+// agents get deterministic behavior.
+func parsePagination(r *http.Request, defaultLimit, maxLimit int) (limit, offset int, err error) {
+	query := r.URL.Query()
+	limit = defaultLimit
+	if value := strings.TrimSpace(query.Get("limit")); value != "" {
+		parsed, parseErr := strconv.Atoi(value)
+		if parseErr != nil || parsed < 1 || parsed > maxLimit {
+			return 0, 0, errors.New("invalid limit")
+		}
+		limit = parsed
+	}
+	if value := strings.TrimSpace(query.Get("offset")); value != "" {
+		parsed, parseErr := strconv.Atoi(value)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, errors.New("invalid offset")
+		}
+		offset = parsed
+	}
+	return limit, offset, nil
 }

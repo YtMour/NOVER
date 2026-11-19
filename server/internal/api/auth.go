@@ -37,7 +37,8 @@ type operatorIdentity struct {
 type operatorContextKey struct{}
 
 func (a *App) operatorLogin(w http.ResponseWriter, r *http.Request) {
-	if !a.allowRequest(r, "operator-login", 8, time.Minute) {
+	if allowed, retry := a.allowRequest(r, "operator-login", 8, time.Minute); !allowed {
+		setRetryAfter(w, retry)
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many login attempts. Please wait and try again.")
 		return
 	}
