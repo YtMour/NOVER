@@ -1978,12 +1978,12 @@ p {
     color: #fff;
     background: #1d2528;
     border: 0;
-    border-radius: 6px;
-    align-items: flex-end;
+    border-radius: 14px;
+    align-items: center;
     width: calc(100% - 48px);
-    min-height: 640px;
+    min-height: clamp(500px, 39vw, 570px);
     margin: 24px auto 0;
-    padding: 72px;
+    padding: clamp(42px, 5vw, 72px);
     display: flex;
     position: relative;
     overflow: hidden;
@@ -1993,7 +1993,7 @@ p {
 .home-hero:before {
     content: "";
     z-index: -1;
-    background: linear-gradient(90deg, #131b1efa, #131b1ee8 34%, #131b1e61 64%, #131b1e1f), url(/images/nover-hero-editorial-v4.webp) 50%/cover no-repeat;
+    background: linear-gradient(90deg, #131b1ef5, #131b1ee8 34%, #131b1e69 64%, #131b1e16), url(/images/nover-hero-editorial-v4.webp) 50%/cover no-repeat;
     animation: 22s ease-in-out infinite alternate hero-drift;
     position: absolute;
     inset: -8px
@@ -2011,7 +2011,7 @@ p {
 
 .home-hero-copy {
     z-index: 1;
-    max-width: 760px;
+    max-width: 700px;
     position: relative
 }
 
@@ -2025,12 +2025,12 @@ p {
 
 .home-hero h1 {
     color: #fff;
-    letter-spacing: 0;
-    max-width: 760px;
+    letter-spacing: -.025em;
+    max-width: 700px;
     margin: 20px 0;
-    font-size: 72px;
-    font-weight: 560;
-    line-height: 1.06
+    font-size: clamp(52px, 4.8vw, 70px);
+    font-weight: 580;
+    line-height: 1.12
 }
 
 .home-hero h1 span {
@@ -2041,8 +2041,8 @@ p {
     color: #e0e5e6;
     max-width: 600px;
     margin-bottom: 31px;
-    font-size: 15px;
-    line-height: 1.85
+    font-size: 16px;
+    line-height: 1.8
 }
 
 .home-hero .button-primary {
@@ -2078,7 +2078,7 @@ p {
     backdrop-filter: blur(14px);
     background: #11181cb8;
     border: 1px solid #ffffff26;
-    border-radius: 5px;
+    border-radius: 9px;
     gap: 1px;
     display: flex;
     position: absolute;
@@ -2094,7 +2094,7 @@ p {
     gap: 4px;
     min-width: 130px;
     padding: 13px 16px;
-    font-size: 9px;
+    font-size: 11px;
     display: grid
 }
 
@@ -2111,27 +2111,52 @@ p {
 .catalog-section {
     width: calc(100% - 48px);
     margin: 0 auto;
-    padding: 88px 0 92px;
+    padding: 64px 0 80px;
+    scroll-margin-top: 76px;
     position: relative
 }
 
+.catalog-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 18px 20px;
+    border: 1px solid #d9e1e2;
+    border-radius: 12px;
+    background: #f7f9f8
+}
+
+.catalog-error .status-message {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent
+}
+
+.catalog-error .button {
+    flex: none;
+    min-height: 38px
+}
+
 .section-heading-row {
-    margin-bottom: 29px
+    margin-bottom: 27px
 }
 
 .section-heading-row h2 {
-    font-size: 31px
+    font-size: clamp(28px, 2.3vw, 36px);
+    letter-spacing: -.02em
 }
 
 .product-grid {
     grid-template-columns: repeat(12, minmax(0, 1fr));
-    gap: 16px
+    gap: 18px
 }
 
 .product-card {
     background: #fff;
     border-color: #d9dede;
-    border-radius: 6px;
+    border-radius: 12px;
     grid-column: span 3;
     min-height: 440px;
     padding: 0;
@@ -2143,8 +2168,9 @@ p {
 }
 
 .product-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 18px 42px #27343b10
+    border-color: #b5c5c7;
+    transform: translateY(-4px);
+    box-shadow: 0 22px 48px #27343b17
 }
 
 .product-card-cover {
@@ -2184,9 +2210,9 @@ p {
     color: #fff;
     background: #182126b8;
     border: 1px solid #ffffff52;
-    border-radius: 3px;
-    padding: 5px 8px;
-    font-size: 9px;
+    border-radius: 5px;
+    padding: 6px 9px;
+    font-size: 11px;
     position: absolute;
     bottom: 13px;
     left: 14px
@@ -2195,7 +2221,7 @@ p {
 .product-card-copy {
     flex-direction: column;
     flex: 1;
-    padding: 19px;
+    padding: 22px;
     display: flex
 }
 
@@ -2215,26 +2241,29 @@ p {
 .product-card h3,
 .product-card:has(.product-card-cover) h3 {
     margin: 18px 0 8px;
-    font-size: 18px
+    font-size: 20px
 }
 
 .product-card:first-child h3 {
-    font-size: 23px
+    font-size: 25px
 }
 
 .product-card p {
     min-height: 0;
     margin: 0 0 20px;
-    font-size: 11px
+    font-size: 13px;
+    line-height: 1.7
 }
 
 .product-card-foot {
-    margin-top: auto
+    margin-top: auto;
+    color: #52636a;
+    font-size: 12px
 }
 
 .product-card-foot>span:last-child {
-    color: #a0a7aa;
-    font: 9px ui-monospace, SFMono-Regular, Consolas, monospace
+    color: #68777c;
+    font: 10px ui-monospace, SFMono-Regular, Consolas, monospace
 }
 
 .delivery-flow {
@@ -2306,15 +2335,17 @@ p {
 .flow-step p {
     color: #b8c2c5;
     max-width: 340px;
-    font-size: 11px
+    font-size: 13px;
+    line-height: 1.7
 }
 
 .home-redeem-layout {
     grid-template-columns: minmax(0, 1.2fr) minmax(420px, 560px);
     gap: 100px;
     width: calc(100% - 48px);
-    min-height: 600px;
+    min-height: 540px;
     margin: 0 auto;
+    scroll-margin-top: 76px;
     padding: 88px 40px 72px
 }
 
@@ -2571,6 +2602,10 @@ p {
     color: #929da0
 }
 
+[data-theme=dark] .product-card-foot>span:last-child {
+    color: #a0abad
+}
+
 [data-theme=dark] .product-release-badge {
     border-color: var(--line);
     background: #171e20;
@@ -2721,6 +2756,16 @@ p {
     border-color: #384246
 }
 
+[data-theme=dark] .catalog-error {
+    background: #191f21;
+    border-color: #384246
+}
+
+[data-theme=dark] .catalog-error .status-message {
+    background: transparent;
+    border: 0
+}
+
 [data-theme=dark] .access-state {
     color: #91bca1;
     background: #192820;
@@ -2798,7 +2843,7 @@ p {
     .home-hero {
         align-items: flex-end;
         width: calc(100% - 24px);
-        min-height: 590px;
+        min-height: 570px;
         margin-top: 12px;
         padding: 30px 24px 34px
     }
@@ -2822,7 +2867,16 @@ p {
 
     .catalog-section {
         width: calc(100% - 24px);
-        padding: 58px 0 60px
+        padding: 52px 0 62px
+    }
+
+    .catalog-error {
+        align-items: stretch;
+        flex-direction: column
+    }
+
+    .catalog-error .button {
+        align-self: flex-start
     }
 
     .section-heading-row {

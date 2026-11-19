@@ -114,7 +114,7 @@ npm run dev
 
 本地运行需要 Go 1.24+、Node.js 24+ 和 npm。PowerShell 从仓库根目录启动；Go API 使用 `.env` 中的管理员令牌和密钥。
 
-用户端 Vite 使用 `45173`，控制台 Vite 使用 `46173`，Go API 使用 `48080`；前端默认直接连接 API 高端口，Vite/Nginx 同时保留代理通道以兼容同源部署。`.env.example` 只用于本地启动；公开部署前替换所有示例密钥、启用 HTTPS 并配置持久化备份。
+用户端 Vite 使用 `45173`，控制台 Vite 使用 `46173`，Go API 使用 `48080`；两端前端默认经各自 Vite/Nginx 的同源 `/api` 与 `/readyz` 代理访问独立 API，避免 `localhost`、`127.0.0.1` 和自定义域名的跨域差异。显式设置 `VITE_API_BASE_URL` 时才直连独立 API 地址，并需同步配置后端允许来源及前端 CSP。`.env.example` 只用于本地启动；公开部署前替换所有示例密钥、启用 HTTPS 并配置持久化备份。
 
 版本级交付回归可在仓库根目录执行：
 

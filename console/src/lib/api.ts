@@ -16,9 +16,7 @@ export class ApiError extends Error {
 function apiURL(path: string) {
   const configured = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
   if (configured) return `${configured}${path}`
-  if (typeof window === 'undefined') return path
-  const port = import.meta.env.VITE_API_PORT || '48080'
-  return `${window.location.protocol}//${window.location.hostname}:${port}${path}`
+  return path
 }
 
 export async function loadServiceHealth() {

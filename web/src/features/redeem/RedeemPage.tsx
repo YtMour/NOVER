@@ -11,6 +11,7 @@ export function RedeemPage() {
   const navigate = useNavigate()
   const { spaceSlug } = useParams()
   const products = useQuery({ queryKey: ['public-products', spaceSlug], queryFn: () => loadPublicProducts(spaceSlug) })
+  const productCount = products.data ? String(products.data.items.length).padStart(2, '0') : '—'
   const mutation = useMutation({
     mutationFn: redeemCode,
     onSuccess: ({ access_token }) => {
@@ -37,15 +38,15 @@ export function RedeemPage() {
           </div>
           <div className="hero-assurance"><ShieldCheck size={17} /><span>一次购买，获得清晰、可追踪的数字交付。</span></div>
         </div>
-        <div className="hero-product-strip" aria-label="NOVER 服务摘要"><span><strong>{String(products.data?.items.length ?? 0).padStart(2, '0')}</strong> 精选产品</span><span><strong>1:1</strong> 商品凭证</span><span><strong>24/7</strong> 自助领取</span></div>
+        <div className="hero-product-strip" aria-label="NOVER 服务摘要"><span><strong>{productCount}</strong> 精选产品</span><span><strong>1:1</strong> 商品凭证</span><span><strong>24/7</strong> 自助领取</span></div>
       </section>
 
       <section id="catalog" className="catalog-section">
         <div className="section-heading-row">
           <div><div className="eyebrow"><span className="eyebrow-line" /> SELECTED COLLECTION</div><h2>正在交付的产品</h2></div>
-          <span className="section-side-note">{String(products.data?.items.length ?? 0).padStart(2, '0')} PRODUCTS · 精选数字工具与创作资源</span>
+          <span className="section-side-note">{productCount} PRODUCTS · 精选数字工具与创作资源</span>
         </div>
-        {products.isError ? <StatusMessage kind="info">产品目录暂时无法加载，兑换入口仍可正常使用。</StatusMessage> : products.isLoading ? <div className="catalog-loading">正在整理产品目录…</div> : products.data?.items.length ? (
+        {products.isError ? <div className="catalog-error"><StatusMessage kind="info">产品目录暂时无法加载，兑换入口仍可正常使用。</StatusMessage><button type="button" className="button button-secondary" onClick={() => void products.refetch()} disabled={products.isFetching}>{products.isFetching ? '正在重新连接…' : '重新加载目录'} <ArrowRight size={15} /></button></div> : products.isLoading ? <div className="catalog-loading">正在整理产品目录…</div> : products.data?.items.length ? (
           <div className="product-grid">
             {products.data.items.map((product, index) => <ProductCard key={product.id} product={product} index={index} spaceSlug={spaceSlug} />)}
           </div>

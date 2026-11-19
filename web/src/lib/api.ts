@@ -11,9 +11,9 @@ export class ApiError extends Error {
 function apiURL(path: string) {
   const configured = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '')
   if (configured) return `${configured}${path}`
-  if (typeof window === 'undefined') return path
-  const port = import.meta.env.VITE_API_PORT || '48080'
-  return `${window.location.protocol}//${window.location.hostname}:${port}${path}`
+  // The Vite/Nginx proxy keeps localhost, 127.0.0.1 and custom domains on
+  // the same origin; an explicit base URL remains available for split deploys.
+  return path
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
