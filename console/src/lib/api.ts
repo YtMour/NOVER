@@ -7,10 +7,19 @@ import type {
   CodeAction,
   Delivery,
   DownloadTicket,
+  InvitationAcceptResponse,
   JoinApplication,
   MemberCreateInput,
+  MemberInvitation,
+  MemberInvitationCreated,
+  MemberInvitationInput,
+  MemberPasswordResetCreated,
   MemberPatchInput,
+  Meta,
+  MfaSetupResponse,
+  MfaStatus,
   OperatorLoginResponse,
+  OperatorLoginSuccess,
   OperatorSession,
   OperatorSessionsResponse,
   PlatformSettings,
@@ -20,6 +29,7 @@ import type {
   ProductList,
   ProductRelease,
   RedeemResponse,
+  SystemStatus,
   TenantMember,
 } from '../types'
 import { OPERATOR_API_PATH } from './routes'
@@ -61,6 +71,11 @@ export async function loadServiceHealth() {
   return request<{ status: 'ready' }>('/readyz')
 }
 
+/** 公开构建元数据；顶栏据此显示 API 版本，失败时静默隐藏。 */
+export function loadMeta() {
+  return request<Meta>('/api/v1/meta')
+}
+
 export function loadPublicProducts() {
   return request<ProductList>('/api/v1/products')
 }
@@ -68,6 +83,19 @@ export function loadPublicProducts() {
 export function operatorLogin(username: string, password: string) {
   const input = z.object({ username: z.string().trim().min(1).max(100), password: z.string().min(1).max(200) }).parse({ username, password })
   return request<OperatorLoginResponse>(`/api/v1/${OPERATOR_API_PATH}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+}
+
+// Recovery codes are formatted XXXX-XXXX-XXXX; keep hyphens and allow either a
+// 6-digit TOTP code or a recovery code in the same input.
+const mfaCodeSchema = z.string().trim().min(6).max(64)
+
+export function operatorLoginMfa(challengeToken: string, code: string) {
+  const input = z.object({ challenge_token: z.string().trim().min(1).max(4096), code: mfaCodeSchema }).parse({ challenge_token: challengeToken, code })
+  return request<OperatorLoginSuccess>(`/api/v1/${OPERATOR_API_PATH}/login/mfa`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -156,6 +184,53 @@ export function updateTenantMember(token: string, membershipId: string, patch: M
   })
 }
 
+const invitationRoleSchema = z.enum(['ADMIN', 'EDITOR', 'FULFILLMENT', 'ANALYST'])
+
+export function loadMemberInvitations(token: string) {
+  return request<{ items: MemberInvitation[] }>(operatorEndpoint('/members/invitations'), { headers: withBearer(token) })
+}
+
+export function createMemberInvitation(token: string, input: MemberInvitationInput) {
+  const payload = z.object({
+    username: z.string().trim().toLowerCase().regex(/^[a-z][a-z0-9_-]{3,31}$/),
+    display_name: z.string().trim().min(2).max(80),
+    role: invitationRoleSchema,
+  }).parse(input)
+  return request<MemberInvitationCreated>(operatorEndpoint('/members/invitations'), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function revokeMemberInvitation(token: string, invitationId: string) {
+  return request<void>(operatorEndpoint(`/members/invitations/${encodeURIComponent(invitationId)}/revoke`), {
+    method: 'POST',
+    headers: withBearer(token),
+  })
+}
+
+export function createMemberPasswordReset(token: string, membershipId: string) {
+  return request<MemberPasswordResetCreated>(operatorEndpoint(`/members/${encodeURIComponent(membershipId)}/password-reset`), {
+    method: 'POST',
+    headers: withBearer(token),
+  })
+}
+
+// Public endpoint: no operator session is required because the invitation token
+// itself proves the right to set the password.
+export function acceptInvitation(invitationToken: string, password: string) {
+  const payload = z.object({
+    token: z.string().trim().min(1).max(1024),
+    password: z.string().trim().min(8).max(200),
+  }).parse({ token: invitationToken, password })
+  return request<InvitationAcceptResponse>('/api/v1/invitations/accept', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
 export function loadOperatorSessions(token: string) {
   return request<OperatorSessionsResponse>(operatorEndpoint('/sessions'), { headers: withBearer(token) })
 }
@@ -174,6 +249,35 @@ export function changeOperatorPassword(token: string, currentPassword: string, n
     new_password: z.string().min(8).max(200),
   }).parse({ current_password: currentPassword, new_password: newPassword })
   return request<void>(operatorEndpoint('/password'), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function loadMfaStatus(token: string) {
+  return request<MfaStatus>(operatorEndpoint('/mfa'), { headers: withBearer(token) })
+}
+
+export function setupMfa(token: string) {
+  return request<MfaSetupResponse>(operatorEndpoint('/mfa/setup'), { method: 'POST', headers: withBearer(token) })
+}
+
+export function enableMfa(token: string, code: string) {
+  const payload = z.object({ code: mfaCodeSchema }).parse({ code })
+  return request<{ enabled: true }>(operatorEndpoint('/mfa/enable'), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function disableMfa(token: string, password: string, code: string) {
+  const payload = z.object({
+    password: z.string().min(1).max(200),
+    code: mfaCodeSchema,
+  }).parse({ password, code })
+  return request<void>(operatorEndpoint('/mfa/disable'), {
     method: 'POST',
     headers: { ...withBearer(token), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -409,6 +513,11 @@ export function reviewJoinApplication(token: string, applicationId: string, acti
 
 export function loadPlatformSettings(token: string) {
   return request<PlatformSettings>(operatorEndpoint('/settings'), { headers: withBearer(token) })
+}
+
+/** 运行中部署的版本、数据库、迁移与存储状态；需要 settings.read 权限。 */
+export function loadSystemStatus(token: string) {
+  return request<SystemStatus>(operatorEndpoint('/system/status'), { headers: withBearer(token) })
 }
 
 export function savePlatformSettings(token: string, settings: Omit<PlatformSettings, 'updated_at'>) {

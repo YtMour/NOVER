@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect } from 'react'
 import { ArrowDownToLine, Clipboard, FileArchive, FileCode2, FileText, GitBranch, LogOut, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
 import anime from 'animejs'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createDownloadTicket, loadDelivery } from '../../lib/api'
 import { StatusMessage } from '../../components/StatusMessage'
+import { DeliverySkeleton } from '../../components/Skeleton'
+import { EmptyState } from '../../components/EmptyState'
+import { useToast } from '../../components/Toast'
 import { updatePolicyLabel } from '../../lib/productProfile'
 import type { Asset } from '../../types'
 
@@ -45,17 +48,19 @@ function formatAccess(validUntil: string) {
 
 export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () => void }) {
   const delivery = useQuery({ queryKey: ['delivery', token], queryFn: () => loadDelivery(token) })
-  const [downloadError, setDownloadError] = useState('')
+  const { notify } = useToast()
   const downloadMutation = useMutation({
     mutationFn: (assetId: string) => createDownloadTicket(token, assetId),
     onSuccess: ({ url }) => {
-      setDownloadError('')
       window.location.assign(url)
       // Ticket creation consumes one download credit, so refresh the quota when
       // the page stays open for an attachment download.
       void delivery.refetch()
     },
-    onError: (error: Error) => setDownloadError(error.message),
+    onError: (error: Error) => {
+      // 下载失败属于瞬时反馈：用 toast 的 role=alert 告知，不再和页面内 StatusMessage 重复。
+      notify({ kind: 'error', title: '下载未能开始', message: error.message })
+    },
   })
 
   useEffect(() => {
@@ -64,7 +69,7 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
     }
   }, [delivery.data])
 
-  if (delivery.isLoading) return <div className="loading-line">正在打开交付空间…</div>
+  if (delivery.isLoading) return <DeliverySkeleton />
   if (delivery.isError) {
     return (
       <div className="delivery-error surface-panel">
@@ -132,10 +137,9 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
         </div>
       </div>
 
-      {downloadError && <StatusMessage>{downloadError}</StatusMessage>}
       {downloadsExhausted && <StatusMessage kind="info">{`下载额度已用完（已用 ${downloadsUsed} / ${maxDownloads} 次）。如需继续下载，请联系卖家补充下载额度。`}</StatusMessage>}
       {data.assets.length === 0 ? (
-        <div className="empty-state">此商品暂时没有可下载的文件。</div>
+        <EmptyState title="暂时没有可下载的文件" description="此商品暂时没有可下载的文件，稍后回到交付空间刷新即可。" />
       ) : (
         <div className="delivery-release-list">
           {assetGroups.map((group, index) => <section className="delivery-release-group" key={group.key}>
@@ -149,36 +153,19 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
   )
 }
 
-type CopyState = 'idle' | 'copied' | 'failed'
-
 function AssetRow({ asset, onDownload, pending, downloadsExhausted }: { asset: Asset; onDownload: () => void; pending: boolean; downloadsExhausted: boolean }) {
-  const [copyState, setCopyState] = useState<CopyState>('idle')
-  const copyTimer = useRef<number | undefined>(undefined)
+  const { notify } = useToast()
   const Icon = fileIcon(asset.file_name)
 
-  useEffect(() => () => {
-    if (copyTimer.current !== undefined) window.clearTimeout(copyTimer.current)
-  }, [])
-
   async function copyHash() {
-    let next: CopyState = 'copied'
     try {
       if (!navigator.clipboard?.writeText) throw new Error('clipboard-unavailable')
       await navigator.clipboard.writeText(asset.sha256)
+      notify({ kind: 'success', message: `已复制 ${asset.file_name} 的 SHA-256 校验值。` })
     } catch {
-      next = 'failed'
+      notify({ kind: 'error', title: '复制失败', message: '无法写入剪贴板，请手动选择校验值复制。' })
     }
-    setCopyState(next)
-    if (copyTimer.current !== undefined) window.clearTimeout(copyTimer.current)
-    copyTimer.current = window.setTimeout(() => setCopyState('idle'), 2200)
   }
-
-  const copyLabel = copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '校验值'
-  const copyFeedback = copyState === 'copied'
-    ? `已复制 ${asset.file_name} 的 SHA-256 校验值`
-    : copyState === 'failed'
-      ? '复制失败，请手动选择校验值复制'
-      : ''
 
   return (
     <article className="asset-row">
@@ -187,9 +174,8 @@ function AssetRow({ asset, onDownload, pending, downloadsExhausted }: { asset: A
         <h3>{asset.file_name}</h3>
         <div className="asset-meta"><span>{formatBytes(asset.size_bytes)}</span><span className="meta-separator" /><span>SHA-256</span><code>{asset.sha256.slice(0, 12)}…</code></div>
       </div>
-      <span className="sr-only" role="status" aria-live="polite">{copyFeedback}</span>
       <button className="hash-copy" type="button" title="复制 SHA-256 校验值" aria-label={`复制 ${asset.file_name} 的 SHA-256 校验值`} onClick={() => void copyHash()}>
-        <Clipboard size={15} aria-hidden="true" /> <span>{copyLabel}</span>
+        <Clipboard size={15} aria-hidden="true" /> <span>校验值</span>
       </button>
       <button className="button button-download" type="button" onClick={onDownload} disabled={pending || downloadsExhausted} title={downloadsExhausted ? '下载额度已用完' : undefined}>
         <ArrowDownToLine size={16} aria-hidden="true" /><span>{pending ? '准备中' : '下载'}</span>

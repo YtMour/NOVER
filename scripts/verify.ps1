@@ -8,10 +8,24 @@
   Windows PowerShell 5.1 可用：
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1 -SkipE2E
   兼容 Windows PowerShell 5.1、PowerShell 7 和 Linux（pwsh -File）。
+
+  可选增强（默认行为不变）：
+    -ReportPath <path>  把本次各步骤结果（名称/状态/耗时/详情/时间/仓库版本）汇总为 JSON 报告；
+                        父目录必须已存在，否则直接失败（脚本不会自动创建目录）。
+    -Integration        若设置了 TEST_DATABASE_URL，在 Go 单元测试后追加
+                        go test -tags=integration ./...（server 目录）；
+                        未设置则跳过并记录原因；失败计入总结果。
+
+  示例：
+    .\scripts\verify.ps1 -SkipE2E -ReportPath .\reports\verify.json
+    $env:TEST_DATABASE_URL = 'postgres://nover:...@127.0.0.1:5433/nover_test?sslmode=disable'
+    .\scripts\verify.ps1 -SkipE2E -Integration -ReportPath .\reports\verify.json
 #>
 [CmdletBinding()]
 param(
-  [switch]$SkipE2E
+  [switch]$SkipE2E,
+  [switch]$Integration,
+  [string]$ReportPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,6 +35,25 @@ $frontendApps = @('web', 'console')
 $npmCommand = if ($env:OS -eq 'Windows_NT') { 'npm.cmd' } else { 'npm' }
 $curlCommand = if ($env:OS -eq 'Windows_NT') { 'curl.exe' } else { 'curl' }
 $readyUrl = 'http://127.0.0.1:48080/readyz'
+
+# -ReportPath：父目录必须已存在（脚本不自动创建目录），否则直接失败。
+$reportFullPath = $null
+if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
+  $candidate = $ReportPath
+  if (-not [System.IO.Path]::IsPathRooted($candidate)) {
+    $candidate = Join-Path (Get-Location).Path $candidate
+  }
+  $reportFullPath = [System.IO.Path]::GetFullPath($candidate)
+  $reportParent = Split-Path -Parent $reportFullPath
+  if ([string]::IsNullOrWhiteSpace($reportParent) -or -not (Test-Path -LiteralPath $reportParent -PathType Container)) {
+    Write-Host ('[失败] 报告父目录不存在：{0}；请先创建目录（脚本不会自动创建）。' -f $reportParent) -ForegroundColor Red
+    exit 1
+  }
+  if (Test-Path -LiteralPath $reportFullPath -PathType Container) {
+    Write-Host ('[失败] -ReportPath 指向目录而不是文件：{0}' -f $reportFullPath) -ForegroundColor Red
+    exit 1
+  }
+}
 
 $results = New-Object System.Collections.ArrayList
 
@@ -88,9 +121,42 @@ function Resolve-PowerShellExe {
   throw ('无法定位当前 PowerShell 可执行文件（$PSHOME 中没有 {0}）。' -f $fileName)
 }
 
+function Get-RepoVersion([string]$Root) {
+  # 仓库版本用于报告：优先 .env 的 APP_VERSION（构建元数据），回退 dev。
+  $envPath = Join-Path $Root '.env'
+  if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) { return 'dev' }
+  foreach ($line in [System.IO.File]::ReadAllLines($envPath, [System.Text.Encoding]::UTF8)) {
+    $trimmed = $line.Trim()
+    if ($trimmed.Length -eq 0) { continue }
+    if ($trimmed.StartsWith('#')) { continue }
+    $index = $trimmed.IndexOf('=')
+    if ($index -lt 1) { continue }
+    if ($trimmed.Substring(0, $index).Trim() -ne 'APP_VERSION') { continue }
+    $value = $trimmed.Substring($index + 1).Trim().Trim('"').Trim("'")
+    if (-not [string]::IsNullOrWhiteSpace($value)) { return $value }
+  }
+  return 'dev'
+}
+
+function Get-GitCommitShort([string]$Root) {
+  if (-not (Get-Command 'git' -ErrorAction SilentlyContinue)) { return 'unknown' }
+  $output = & git -C $Root rev-parse --short=12 HEAD 2>$null
+  if ($LASTEXITCODE -ne 0) { return 'unknown' }
+  $first = @($output) | Select-Object -First 1
+  if ($null -eq $first) { return 'unknown' }
+  return ([string]$first).Trim()
+}
+
 Write-Host 'NOVER 本地验证' -ForegroundColor Cyan
 Write-Host ('  仓库：{0}' -f $repoRoot)
 Write-Host ('  冒烟：{0}' -f $(if ($SkipE2E) { '跳过（-SkipE2E）' } else { '运行（需要 Docker 与已启动服务）' }))
+if ($null -ne $reportFullPath) {
+  Write-Host ('  报告：{0}' -f $reportFullPath)
+}
+if ($Integration) {
+  $integrationDbState = if ([string]::IsNullOrWhiteSpace([string]$env:TEST_DATABASE_URL)) { '未设置 TEST_DATABASE_URL（将跳过）' } else { 'TEST_DATABASE_URL 已设置' }
+  Write-Host ('  集成测试：执行 go test -tags=integration（{0}）' -f $integrationDbState)
+}
 
 # ---------------------------------------------------------------------------
 # 1. 工具检查
@@ -136,6 +202,18 @@ if ($goAvailable) {
 } else {
   Add-Skipped 'Go vet（server）' '未找到 go'
   Add-Skipped 'Go test（server）' '未找到 go'
+}
+
+# 2.1 集成测试（仅 -Integration）：需要 TEST_DATABASE_URL 指向可丢弃数据库
+if ($Integration) {
+  $integrationDatabaseUrl = [string]$env:TEST_DATABASE_URL
+  if (-not $goAvailable) {
+    Add-Skipped 'Go test（integration）' '未找到 go'
+  } elseif ([string]::IsNullOrWhiteSpace($integrationDatabaseUrl)) {
+    Add-Skipped 'Go test（integration）' '未设置 TEST_DATABASE_URL；-Integration 已跳过（设置后重跑即可）'
+  } else {
+    Invoke-Step 'Go test（integration）' { Invoke-Native $serverDir 'go' @('test', '-tags=integration', './...') }
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -213,6 +291,62 @@ foreach ($result in $results) {
     $color = 'Yellow'; $skipped++
   }
   Write-Host ('  [{0}] {1}（{2:N1}s）{3}' -f $result.Status, $result.Name, $result.Seconds, $result.Detail) -ForegroundColor $color
+}
+
+# ---------------------------------------------------------------------------
+# 5.1 JSON 报告（仅 -ReportPath）
+# ---------------------------------------------------------------------------
+if ($null -ne $reportFullPath) {
+  $reportStatus = if ($failed -gt 0) { '失败' } elseif ($skipped -gt 0) { '通过（含跳过）' } else { '通过' }
+  $reportRows = @()
+  foreach ($result in $results) {
+    $reportRows += [ordered]@{
+      name    = $result.Name
+      status  = $result.Status
+      seconds = [math]::Round([double]$result.Seconds, 3)
+      detail  = [string]$result.Detail
+    }
+  }
+  $report = [ordered]@{
+    report_version   = 1
+    tool             = 'scripts/verify.ps1'
+    created_at       = [System.DateTime]::UtcNow.ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+    created_at_local = [System.DateTime]::Now.ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+    host             = [System.Environment]::MachineName
+    platform         = [ordered]@{
+      os         = $env:OS
+      ps_version = $PSVersionTable.PSVersion.ToString()
+      ps_edition = [string]$PSVersionTable.PSEdition
+    }
+    repo             = [ordered]@{
+      root       = $repoRoot
+      version    = (Get-RepoVersion $repoRoot)
+      git_commit = (Get-GitCommitShort $repoRoot)
+    }
+    options          = [ordered]@{
+      skip_e2e    = [bool]$SkipE2E
+      integration = [bool]$Integration
+    }
+    summary          = [ordered]@{
+      status  = $reportStatus
+      passed  = $passed
+      failed  = $failed
+      skipped = $skipped
+      total   = $results.Count
+    }
+    results          = @($reportRows)
+  }
+  try {
+    $reportJson = ($report | ConvertTo-Json -Depth 8) -replace "`r`n", "`n"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($reportFullPath, ($reportJson + "`n"), $utf8NoBom)
+    Write-Host ''
+    Write-Host ('报告已写入：{0}' -f $reportFullPath) -ForegroundColor Cyan
+  } catch {
+    Write-Host ''
+    Write-Host ('[失败] 写入报告失败：{0}' -f $_.Exception.Message) -ForegroundColor Red
+    exit 1
+  }
 }
 
 Write-Host ''

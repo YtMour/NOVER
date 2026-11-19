@@ -77,6 +77,26 @@ services:
     networks:
       - private
 
+  # Migration tooling for local upgrades:
+  #   docker compose --profile ops run --rm migrate -status
+  #   docker compose --profile ops run --rm migrate -apply
+  migrate:
+    build:
+      context: ./server
+      args:
+        VERSION: ${APP_VERSION:-dev}
+        COMMIT: ${GIT_COMMIT:-unknown}
+        BUILT_AT: ${BUILD_TIME:-unknown}
+    profiles: ["ops"]
+    entrypoint: ["/usr/local/bin/nover-migrate"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-nover}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nover}?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - private
+
   web:
     build:
       context: ./web
@@ -84,9 +104,15 @@ services:
         VITE_CONSOLE_URL: ${CONSOLE_URL:-http://localhost:46173}${OPERATOR_WEB_PATH:-/ops-7f3c}
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_HOST_PORT:-45173}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
     networks:
       - private
 
@@ -100,9 +126,15 @@ services:
         VITE_STOREFRONT_URL: ${STOREFRONT_URL:-http://localhost:45173}
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "${CONSOLE_BIND_ADDRESS:-127.0.0.1}:${CONSOLE_HOST_PORT:-46173}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
     networks:
       - private
 

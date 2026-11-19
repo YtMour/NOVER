@@ -29,16 +29,28 @@
 ```json
 {
   "name": "nover",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "commit": "8d75a0f",
   "built_at": "2026-11-19T05:00:00Z",
-  "environment": "development"
+  "environment": "development",
+  "schema_version": "0004"
 }
 ```
 
 ### `GET /readyz`
 
 数据库可用时返回 `{"status":"ready"}`，否则 `503 database_unavailable`。
+
+### `GET /metrics`
+
+Prometheus 文本格式（`text/plain; version=0.0.4`），包含：
+
+- `nover_http_requests_total{method,route,status}`：按 chi 路由模式聚合的请求计数；
+- `nover_http_requests_in_flight`：当前处理中的请求数；
+- `nover_uptime_seconds`：进程运行时间；
+- `nover_build_info{version,commit}`：构建身份。
+
+`/metrics` 为公开端点，适合内网抓取；公网部署应在反向代理层限制访问。
 
 ## 3. 公开商品与申请
 
@@ -51,6 +63,7 @@
 | `GET` | `/api/v1/products/{productID}/images/{imageID}` | 默认空间商品效果图 |
 | `GET` | `/api/v1/spaces/{slug}/products/{productID}/images/{imageID}` | 商户空间效果图 |
 | `POST` | `/api/v1/join-applications` | 提交加入申请，返回 `{id,status,created_at}` |
+| `POST` | `/api/v1/invitations/accept` | 使用一次性邀请/重置 token 设置密码（无需登录） |
 
 目录响应包含商品名称、简介、Markdown 详情、状态、当前发布版本、更新说明、文件数量与效果图列表；不包含交付文件和下载地址。
 
@@ -144,15 +157,35 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| `POST` | `/api/v1/cp-7f3c/login` | 公开（限流） | 用户名密码换会话 |
+| `POST` | `/api/v1/cp-7f3c/login` | 公开（限流） | 用户名密码换会话；启用 MFA 时返回两步挑战 |
+| `POST` | `/api/v1/cp-7f3c/login/mfa` | 公开（限流） | 使用 challenge_token + TOTP/恢复码完成登录 |
 | `GET` | `/api/v1/cp-7f3c/session` | 登录 | 当前账号、租户、角色、权限点 |
 | `POST` | `/api/v1/cp-7f3c/session/revoke` | 登录 | 服务端撤销当前会话 |
+| `GET` | `/api/v1/cp-7f3c/mfa` | 登录 | MFA 状态与剩余恢复码 |
+| `POST` | `/api/v1/cp-7f3c/mfa/setup` | 登录 | 生成 TOTP secret、otpauth URI、10 个恢复码 |
+| `POST` | `/api/v1/cp-7f3c/mfa/enable` | 登录 | 用验证码启用 MFA |
+| `POST` | `/api/v1/cp-7f3c/mfa/disable` | 登录 | 密码 + 验证码/恢复码关闭 MFA |
 
 ```bash
 curl -s -X POST http://127.0.0.1:48080/api/v1/cp-7f3c/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"admin"}'
 ```
+
+启用 MFA 后，登录分为两步：
+
+```json
+// 第一步响应
+{ "mfa_required": true, "challenge_token": "...", "expires_at": "..." }
+```
+
+```bash
+curl -s -X POST http://127.0.0.1:48080/api/v1/cp-7f3c/login/mfa \
+  -H 'Content-Type: application/json' \
+  -d '{"challenge_token":"...","code":"123456"}'
+```
+
+第二步接受 6 位 TOTP 或一次性恢复码（可含连字符），成功响应与普通登录一致。挑战 5 分钟有效；错误码 `invalid_mfa_code`、`mfa_challenge_invalid`。MFA 设置时返回 `otpauth_url` 与 10 个恢复码（仅本次展示），验证码验证通过后才正式启用。
 
 ### 5.2 商品、版本与文件
 
@@ -216,20 +249,28 @@ curl -s -X POST http://127.0.0.1:48080/api/v1/cp-7f3c/login \
 | `GET` | `/members` | `member.read` |
 | `POST` | `/members` | `member.manage` |
 | `PATCH` | `/members/{membershipID}` | `member.manage` |
+| `GET` | `/members/invitations` | `member.manage` |
+| `POST` | `/members/invitations` | `member.manage` |
+| `POST` | `/members/invitations/{id}/revoke` | `member.manage` |
+| `POST` | `/members/{membershipID}/password-reset` | `member.manage` |
 | `GET/PUT` | `/settings` | `settings.read` / `settings.manage` |
 | `GET` | `/sessions` | 登录即可 |
 | `POST` | `/sessions/{id}/revoke` | 登录即可（仅自己的会话） |
 | `POST` | `/sessions/revoke-others` | 登录即可 |
 | `POST` | `/password` | 登录即可 |
 | `GET` | `/audit-events` | `audit.read` |
+| `GET` | `/system/status` | `settings.read` |
 
 审核动作：`REVIEW`、`APPROVE`、`REJECT`。重复审核已完成状态返回 `409 application_status_conflict`；审核通过激活独立租户 OWNER。
 
 成员管理：
 
-- `POST /members` 请求 `{username, display_name, password, role}`；`role` 为 `ADMIN` / `EDITOR` / `FULFILLMENT` / `ANALYST`，不能创建 `OWNER`；用户名全局唯一。
+- 推荐使用一次性邀请：`POST /members/invitations` 请求 `{username, display_name, role}`，返回一次性 `token` 与 `expires_at`；运营者把 `${console_url}${operator_web_path}/accept?token=...` 链接线下发给成员，成员在公开接口 `POST /api/v1/invitations/accept`（`{token, password}`）设置密码后账号激活。
+- `GET /members/invitations` 返回邀请状态（`PENDING` / `USED` / `EXPIRED` / `REVOKED`）；可对未使用邀请执行撤销。
+- `POST /members/{membershipID}/password-reset` 为现有成员生成 2 小时有效的一次性重置链接；使用后撤销该成员全部会话。
+- 兼容接口 `POST /members` 仍可用运营者指定初始密码直接创建成员；生产推荐邀请流程。
 - `PATCH /members/{membershipID}` 请求 `{role?, status?}`；不能修改自己（`member_self_forbidden`）或 OWNER（`member_owner_protected`）；暂停成员会撤销其会话。
-- 账号只能来自运营者创建或加入申请审核；初始密码需线下告知，系统不发送邮件。
+- 账号邀请/重置 token 只保存哈希，一次性使用；系统不发送邮件，链接由运营者线下传递。
 
 账户安全：
 
@@ -262,6 +303,34 @@ GET /audit-events?limit=50&offset=0&action=REFUND&resource_type=redeem_code
 }
 ```
 
+系统状态（升级/运维观测）：
+
+```text
+GET /api/v1/cp-7f3c/system/status
+```
+
+```json
+{
+  "app": {
+    "name": "nover",
+    "version": "0.5.0",
+    "commit": "unknown",
+    "built_at": "unknown",
+    "environment": "development",
+    "uptime_seconds": 123
+  },
+  "database": {
+    "ready": true,
+    "latency_ms": 1.8,
+    "migrations": { "applied": 4, "pending": 0, "latest": "0004" },
+    "schema_ready": true
+  },
+  "storage": { "path": "/var/lib/nover/files", "writable": true }
+}
+```
+
+`pending > 0` 表示需要执行迁移（`nover-migrate -apply` 或重启 API）。迁移 CLI 与升级流程见[升级指南](upgrade.md)。
+
 ## 6. 状态与错误码
 
 | 类别 | 值 |
@@ -272,7 +341,7 @@ GET /audit-events?limit=50&offset=0&action=REFUND&resource_type=redeem_code
 | 权益状态 | `ACTIVE` / `SUSPENDED` / `REVOKED` / `EXPIRED` |
 | 注册申请 | `PENDING` / `REVIEWING` / `APPROVED` / `REJECTED` |
 
-高频错误码：`operator_auth_required`、`operator_permission_required`、`rate_limited`、`invalid_code_format`、`code_expired`、`code_not_refundable`、`release_in_use`、`asset_immutable`、`delivery_asset_required`、`download_limit_reached`、`invalid_pagination`、`invalid_member`、`member_exists`、`member_not_found`、`member_self_forbidden`、`member_owner_protected`、`invalid_password`、`invalid_current_password`、`session_not_found`、`invalid_audit_filter`。
+高频错误码：`operator_auth_required`、`operator_permission_required`、`rate_limited`、`invalid_code_format`、`code_expired`、`code_not_refundable`、`release_in_use`、`asset_immutable`、`delivery_asset_required`、`download_limit_reached`、`invalid_pagination`、`invalid_member`、`member_exists`、`member_not_found`、`member_self_forbidden`、`member_owner_protected`、`invalid_password`、`invalid_current_password`、`session_not_found`、`invalid_audit_filter`、`invalid_invitation`、`invitation_expired`、`invitation_used`、`invalid_mfa_code`、`mfa_challenge_invalid`、`mfa_already_enabled`、`mfa_setup_required`、`mfa_not_enabled`。
 
 权限点：`product.read`、`product.write`、`product.publish`、`fulfillment.write`、`code.issue`、`code.manage`、`activity.read`、`member.read`、`member.manage`、`audit.read`、`application.read`、`application.review`、`settings.read`、`settings.manage`。OWNER 与 ADMIN 拥有成员管理与审计日志权限；其他租户角色不具备。
 

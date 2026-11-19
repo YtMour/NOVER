@@ -20,12 +20,20 @@ Windows 注意：
 ## 2. 一键验证
 
 ```powershell
-# 单元测试 + 静态检查 + 双端构建（默认再跑三套业务冒烟）
+# 单元测试 + 静态检查 + 双端构建（默认再跑四套业务冒烟）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 
 # 只做快速检查，跳过需要运行中容器的冒烟
 .\scripts\verify.ps1 -SkipE2E
+
+# 输出 JSON 报告 / 额外运行真实数据库集成测试
+.\scripts\verify.ps1 -ReportPath .\tmp\verify-report.json
+$env:TEST_DATABASE_URL = "postgres://nover:<password>@127.0.0.1:5433/nover_integration_test?sslmode=disable"
+$env:TEST_STORAGE_DIR = "D:\NOVER\tmp\integration-storage"
+.\scripts\verify.ps1 -SkipE2E -Integration
 ```
+
+集成测试使用 build tag，需要可丢弃的 PostgreSQL；测试会创建临时商品/账号并在结束时清理。CI 在独立 PostgreSQL service 上运行同一套测试。
 
 POSIX 环境使用 `./scripts/verify.sh`（CI 使用同一套步骤）。CI 配置见 [.github/workflows/ci.yml](../.github/workflows/ci.yml)。
 
@@ -96,6 +104,11 @@ npm.cmd run dev
 ## 5. 维护与清理
 
 ```powershell
+# 迁移状态 / 手工应用（等价于 API 启动时的自动迁移）
+docker compose --profile ops run --rm migrate -status
+docker compose --profile ops run --rm migrate -apply
+docker compose --profile ops run --rm migrate -json
+
 # 干跑（默认，只报告）
 docker compose --profile ops run --rm maintenance
 
@@ -106,21 +119,22 @@ docker compose --profile ops run --rm maintenance -apply
 docker compose --profile ops run --rm maintenance -json
 ```
 
-清理内容：过期/已撤销会话、过期下载票据、把过期兑换码与权益标记为 `EXPIRED`、删除超过 24 小时且无数据库引用的私有文件与空目录。详见[运维手册](operations.md)。
+清理内容：过期/已撤销会话、过期下载票据、把过期兑换码与权益标记为 `EXPIRED`、删除超过 24 小时且无数据库引用的私有文件与空目录。升级/回滚流程见[升级指南](upgrade.md)。
 
 ## 6. 业务冒烟
 
 ```powershell
-# 三套一起跑（需要 API 已在 127.0.0.1:48080 运行）
+# 四套一起跑（需要 API 已在 127.0.0.1:48080 运行）
 .\scripts\qa\run-all.ps1
 
 # 单独运行
 .\scripts\qa\version-entitlement-smoke.ps1
 .\scripts\qa\tenant-delivery-smoke.ps1
 .\scripts\qa\operator-capabilities-smoke.ps1
+.\scripts\qa\identity-mfa-invitation-smoke.ps1
 ```
 
-第三套覆盖商品结构化资料与更新策略、退款、成员管理、改密/会话与审计日志。脚本会创建临时租户/商品/成员并在结束时清理；`-KeepFixture` 可保留夹具用于手动排查。
+第三套覆盖商品结构化资料与更新策略、退款、成员管理、改密/会话与审计日志；第四套覆盖一次性邀请、设置密码、TOTP MFA 启用/两步登录/恢复码、管理员重置密码与审计。脚本会创建临时租户/商品/成员并在结束时清理；`-KeepFixture` 可保留夹具用于手动排查。
 
 ## 7. 代码结构
 
@@ -128,6 +142,7 @@ docker compose --profile ops run --rm maintenance -json
 | --- | --- |
 | `server/cmd/api` | API 进程入口、启动日志、优雅停机 |
 | `server/cmd/maintenance` | 数据保留与文件清理命令 |
+| `server/cmd/migrate` | 迁移状态/应用命令（本地升级与 CI） |
 | `server/internal/api` | 路由、中间件、权限、业务处理器 |
 | `server/internal/config` | 环境变量加载与生产环境校验 |
 | `server/internal/db` | 连接、迁移器、引导账号 |

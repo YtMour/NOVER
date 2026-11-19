@@ -2,17 +2,19 @@ import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, LockKeyhole, MonitorSmartphone, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react'
 import { StatusMessage } from '../../components/StatusMessage'
+import { useToast } from '../../components/Toast'
 import { changeOperatorPassword, loadOperatorSessions, revokeOperatorSessionById, revokeOtherOperatorSessions } from '../../lib/api'
 import { describeError } from '../../lib/errors'
+import { MfaCard } from './MfaCard'
 
 export function AccountView({ token }: { token: string }) {
   const queryClient = useQueryClient()
+  const toast = useToast()
   const sessions = useQuery({ queryKey: ['operator-sessions', token], queryFn: () => loadOperatorSessions(token), retry: false })
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [formError, setFormError] = useState('')
-  const [notice, setNotice] = useState('')
 
   async function reloadSessions() {
     await queryClient.invalidateQueries({ queryKey: ['operator-sessions', token] })
@@ -25,12 +27,12 @@ export function AccountView({ token }: { token: string }) {
       setNewPassword('')
       setConfirmPassword('')
       setFormError('')
-      setNotice('密码已更新，其他设备已下线。')
+      toast.success('密码已更新，其他设备已下线。')
       await reloadSessions()
     },
     onError: (error) => {
-      setNotice('')
-      setFormError(describeError(error))
+      setFormError('')
+      toast.error(describeError(error))
     },
   })
 
@@ -38,12 +40,12 @@ export function AccountView({ token }: { token: string }) {
     mutationFn: (sessionId: string) => revokeOperatorSessionById(token, sessionId),
     onSuccess: async () => {
       setFormError('')
-      setNotice('该设备的登录会话已撤销。')
+      toast.success('该设备的登录会话已撤销。')
       await reloadSessions()
     },
     onError: (error) => {
-      setNotice('')
-      setFormError(describeError(error))
+      setFormError('')
+      toast.error(describeError(error))
     },
   })
 
@@ -51,29 +53,26 @@ export function AccountView({ token }: { token: string }) {
     mutationFn: () => revokeOtherOperatorSessions(token),
     onSuccess: async ({ revoked }) => {
       setFormError('')
-      setNotice(`已撤销 ${revoked} 个其他设备会话。`)
+      toast.success(`已撤销 ${revoked} 个其他设备会话。`)
       await reloadSessions()
     },
     onError: (error) => {
-      setNotice('')
-      setFormError(describeError(error))
+      setFormError('')
+      toast.error(describeError(error))
     },
   })
 
   function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (newPassword.length < 8) {
-      setNotice('')
       setFormError('新密码至少 8 位。')
       return
     }
     if (newPassword !== confirmPassword) {
-      setNotice('')
       setFormError('两次输入的新密码不一致。')
       return
     }
     if (newPassword === currentPassword) {
-      setNotice('')
       setFormError('新密码不能与当前密码相同。')
       return
     }
@@ -88,9 +87,8 @@ export function AccountView({ token }: { token: string }) {
 
   return <section className="account-view">
     <div className="overview-heading"><div><span className="section-kicker">ACCOUNT SECURITY</span><h2>账户与安全</h2></div><span>{sessions.isLoading ? '正在同步会话' : `${items.length} 个活跃会话`}</span></div>
-    <div className="member-security-banner"><ShieldCheck size={19} /><div><strong>修改密码会立即下线其他设备</strong><span>会话列表展示当前账号在各设备上的登录记录。撤销会话会立即让其访问令牌失效；密码更新后所有其他设备的会话会被清理。</span></div></div>
+    <div className="member-security-banner"><ShieldCheck size={19} /><div><strong>修改密码会立即下线其他设备</strong><span>会话列表展示当前账号在各设备上的登录记录。撤销会话会立即让其访问令牌失效；密码更新后所有其他设备的会话会被清理。建议同时启用两步验证。</span></div></div>
     {formError && <StatusMessage>{formError}</StatusMessage>}
-    {notice && <StatusMessage kind="success">{notice}</StatusMessage>}
     <div className="account-grid">
       <section className="admin-section account-card">
         <div className="admin-section-heading"><div className="tool-icon tool-icon--blue"><KeyRound size={18} /></div><div><span className="section-kicker">PASSWORD</span><h2>修改登录密码</h2></div></div>
@@ -122,6 +120,7 @@ export function AccountView({ token }: { token: string }) {
         </div>
       </section>
     </div>
+    <MfaCard token={token} />
   </section>
 }
 

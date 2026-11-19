@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, ListFilter, RefreshCw, ScrollText } from 'lucide-react'
 import { StatusMessage } from '../../components/StatusMessage'
+import { SkeletonRows } from '../../components/Skeleton'
 import { loadAuditEvents } from '../../lib/api'
 import { describeError } from '../../lib/errors'
 import type { AuditEvent } from '../../types'
@@ -56,7 +57,7 @@ export function AuditView({ token }: { token: string }) {
     {audit.isError && <StatusMessage>{describeError(audit.error)}</StatusMessage>}
     <div className="audit-table">
       <div className="audit-table-head"><span>时间</span><span>操作者</span><span>动作</span><span>资源</span><span>元数据</span></div>
-      {audit.isLoading ? <div className="empty-state">正在读取审计事件…</div> : items.length ? items.map((item) => <AuditRow item={item} key={item.id} />) : <div className="audit-empty"><ScrollText size={24} /><strong>没有匹配的审计事件</strong><span>调整操作或资源类型筛选后再试。</span></div>}
+      {audit.isLoading ? <SkeletonRows rows={5} columns={5} label="正在读取审计事件" /> : items.length ? items.map((item) => <AuditRow item={item} key={item.id} />) : <div className="audit-empty"><ScrollText size={24} /><strong>没有匹配的审计事件</strong><span>调整操作或资源类型筛选后再试。</span></div>}
     </div>
     {audit.hasNextPage && <button className="button button-secondary audit-load-more" type="button" disabled={audit.isFetchingNextPage} onClick={() => void audit.fetchNextPage()}><ChevronDown size={15} />{audit.isFetchingNextPage ? '加载中…' : '加载更多'}</button>}
     {!audit.hasNextPage && items.length > 0 && <p className="audit-end-note">已显示全部 {items.length} 条匹配记录。</p>}

@@ -3,22 +3,31 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/YtMour/NOVER/server/internal/buildinfo"
 	"github.com/YtMour/NOVER/server/internal/config"
+	metricspkg "github.com/YtMour/NOVER/server/internal/metrics"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type App struct {
-	db     *pgxpool.Pool
-	cfg    config.Config
-	logger *slog.Logger
-	limit  *rateLimiter
+	db        *pgxpool.Pool
+	cfg       config.Config
+	logger    *slog.Logger
+	limit     *rateLimiter
+	metrics   *metricspkg.Registry
+	startedAt time.Time
 }
 
 func New(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) *App {
-	return &App{db: pool, cfg: cfg, logger: logger, limit: newRateLimiter()}
+	return &App{
+		db: pool, cfg: cfg, logger: logger, limit: newRateLimiter(),
+		metrics:   metricspkg.New(buildinfo.Version, buildinfo.Commit),
+		startedAt: time.Now(),
+	}
 }
 
 func (a *App) Handler() http.Handler {
@@ -31,8 +40,10 @@ func (a *App) Handler() http.Handler {
 	r.Use(a.cors)
 	r.Get("/healthz", a.health)
 	r.Get("/readyz", a.ready)
+	r.Get("/metrics", a.metricsHandler)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/meta", a.meta)
+		r.Post("/invitations/accept", a.acceptInvitation)
 		r.Get("/products", a.listPublicProducts)
 		r.Get("/products/{productID}", a.publicProduct)
 		r.Get("/products/{productID}/images/{imageID}", a.serveProductImage)
@@ -41,6 +52,7 @@ func (a *App) Handler() http.Handler {
 		r.Get("/spaces/{spaceSlug}/products/{productID}/images/{imageID}", a.serveSpaceProductImage)
 		r.Post("/join-applications", a.createJoinApplication)
 		r.Post(operatorPath+"/login", a.operatorLogin)
+		r.Post(operatorPath+"/login/mfa", a.operatorLoginMFA)
 		r.Post("/redeem", a.redeem)
 		r.Get("/delivery", a.delivery)
 		r.Post("/assets/{assetID}/ticket", a.createDownloadTicket)
@@ -50,6 +62,10 @@ func (a *App) Handler() http.Handler {
 			r.Get("/session", a.operatorSession)
 			r.Post("/session/revoke", a.revokeOperatorSession)
 			r.Post("/password", a.changeOperatorPassword)
+			r.Get("/mfa", a.mfaStatus)
+			r.Post("/mfa/setup", a.mfaSetup)
+			r.Post("/mfa/enable", a.mfaEnable)
+			r.Post("/mfa/disable", a.mfaDisable)
 			r.Get("/sessions", a.listOperatorSessions)
 			r.Post("/sessions/{sessionID}/revoke", a.revokeOperatorSessionByID)
 			r.Post("/sessions/revoke-others", a.revokeOtherOperatorSessions)
@@ -57,10 +73,15 @@ func (a *App) Handler() http.Handler {
 			r.With(a.requirePermission(permissionApplicationRead)).Get("/applications", a.listJoinApplications)
 			r.With(a.requirePermission(permissionApplicationReview)).Post("/applications/{applicationID}/review", a.reviewJoinApplication)
 			r.With(a.requirePermission(permissionSettingsRead)).Get("/settings", a.getPlatformSettings)
+			r.With(a.requirePermission(permissionSettingsRead)).Get("/system/status", a.systemStatus)
 			r.With(a.requirePermission(permissionSettingsManage)).Put("/settings", a.updatePlatformSettings)
 			r.With(a.requirePermission(permissionMemberRead)).Get("/members", a.listTenantMembers)
 			r.With(a.requirePermission(permissionMemberManage)).Post("/members", a.createTenantMember)
 			r.With(a.requirePermission(permissionMemberManage)).Patch("/members/{membershipID}", a.updateTenantMember)
+			r.With(a.requirePermission(permissionMemberManage)).Get("/members/invitations", a.listMemberInvitations)
+			r.With(a.requirePermission(permissionMemberManage)).Post("/members/invitations", a.createMemberInvitation)
+			r.With(a.requirePermission(permissionMemberManage)).Post("/members/invitations/{invitationID}/revoke", a.revokeMemberInvitation)
+			r.With(a.requirePermission(permissionMemberManage)).Post("/members/{membershipID}/password-reset", a.createPasswordReset)
 			r.With(a.requirePermission(permissionProductRead)).Get("/products", a.listProducts)
 			r.With(a.requirePermission(permissionActivityRead)).Get("/activity", a.adminActivity)
 			r.With(a.requirePermission(permissionProductWrite)).Post("/products", a.createProduct)

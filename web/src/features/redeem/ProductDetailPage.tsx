@@ -2,6 +2,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { StatusMessage } from '../../components/StatusMessage'
+import { ProductDetailSkeleton } from '../../components/Skeleton'
 import { ApiError, loadProductDetail } from '../../lib/api'
 import { ProductDetailView } from './ProductDetailView'
 
@@ -22,7 +23,7 @@ export function ProductDetailPage() {
 
   const catalogTo = spaceSlug ? `/spaces/${spaceSlug}` : '/'
 
-  if (detail.isLoading) return <div className="loading-line">正在读取商品信息…</div>
+  if (detail.isLoading) return <ProductDetailSkeleton />
   if (detail.isError && !isProductNotFound(detail.error)) return <section className="product-detail-state surface-panel"><StatusMessage kind="info">商品详情暂时没有响应，请稍后重试。</StatusMessage><button className="button button-secondary" onClick={() => navigate(catalogTo)}>返回首页</button></section>
   if (!detail.data) return <section className="product-detail-state surface-panel"><div className="section-kicker">PRODUCT NOT FOUND</div><h1 className="page-title">商品暂时不可用</h1><p>这个商品可能已经下架，或者链接已经过期。</p><button className="button button-secondary" onClick={() => navigate(spaceSlug ? `/spaces/${spaceSlug}#catalog` : '/#catalog')}><ArrowLeft size={16} />返回商品目录</button></section>
 

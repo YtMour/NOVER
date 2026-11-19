@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent } from 'react'
-import { Archive, Ban, BarChart3, Building2, Check, Copy, Eye, FileUp, GitBranch, HandCoins, ImagePlus, KeyRound, LayoutDashboard, LockKeyhole, PackagePlus, Pause, Plus, RefreshCw, RotateCcw, Save, ScrollText, Send, ServerCog, Settings2, ShieldCheck, TicketCheck, Trash2, UserCheck, UserCog, UsersRound, X } from 'lucide-react'
+import { AlertTriangle, Archive, Ban, BarChart3, Building2, Check, Clock3, Copy, Database, Eye, FileUp, GitBranch, HandCoins, HardDrive, ImagePlus, KeyRound, LayoutDashboard, LockKeyhole, PackagePlus, Pause, Plus, RefreshCw, RotateCcw, Save, ScrollText, Send, ServerCog, Settings2, ShieldCheck, TicketCheck, Trash2, UserCheck, UserCog, UsersRound, X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createProduct, createProductRelease, deleteDraftAsset, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductAssets, loadProductImageBlob, loadProductImages, loadProductReleases, loadProducts, operatorLogin, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductReleaseStatus, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
+import { ApiError, createProduct, createProductRelease, deleteDraftAsset, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductAssets, loadProductImageBlob, loadProductImages, loadProductReleases, loadProducts, loadSystemStatus, operatorLogin, operatorLoginMfa, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductReleaseStatus, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
 import { StatusMessage } from '../../components/StatusMessage'
+import { SkeletonLines } from '../../components/Skeleton'
+import { useToast } from '../../components/Toast'
 import { ProductDetailView } from '../redeem/ProductDetailView'
-import type { AdminActivity, AdminActivitySummary, CodeAction, JoinApplication, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductRelease, ProductUpdatePolicy } from '../../types'
+import type { AdminActivity, AdminActivitySummary, CodeAction, JoinApplication, OperatorLoginMfaChallenge, OperatorLoginSuccess, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductRelease, ProductUpdatePolicy, SystemStatus } from '../../types'
 import { AccountView } from './AccountView'
 import { AuditView } from './AuditView'
 import { MembersAdminView } from './MembersAdminView'
@@ -33,15 +35,18 @@ function readViewFromHash(): AdminView {
 }
 
 export function AdminPage() {
+  const toast = useToast()
   const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem('nover.operatorToken') ?? '')
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
+  const [mfaChallenge, setMfaChallenge] = useState<OperatorLoginMfaChallenge | null>(null)
+  const [mfaCode, setMfaCode] = useState('')
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false)
+  const [loginError, setLoginError] = useState('')
   const [selectedId, setSelectedId] = useState('')
   const [creatingDraft, setCreatingDraft] = useState(false)
   const [createdCodes, setCreatedCodes] = useState<string[]>([])
   const [view, setView] = useState<AdminView>(readViewFromHash)
-  const [notice, setNotice] = useState('')
-  const [error, setError] = useState('')
   const queryClient = useQueryClient()
   const session = useQuery({ queryKey: ['operator-session', adminToken], queryFn: () => loadOperatorSession(adminToken), enabled: adminToken.length > 0, retry: false })
   const hasPermission = (permission: string) => session.data?.permissions.includes(permission) ?? false
@@ -78,18 +83,69 @@ export function AdminPage() {
 
   const loginMutation = useMutation({
     mutationFn: () => operatorLogin(username, password),
-    onSuccess: ({ access_token, session: identity }) => {
-      sessionStorage.setItem('nover.operatorToken', access_token)
-      setAdminToken(access_token)
-      queryClient.setQueryData(['operator-session', access_token], identity)
-      setPassword('')
-      setError('')
+    onSuccess: (result) => {
+      if ('mfa_required' in result) {
+        setMfaChallenge(result)
+        setMfaCode('')
+        setUseRecoveryCode(false)
+        setLoginError('')
+        setPassword('')
+        return
+      }
+      completeLogin(result)
+    },
+    onError: () => setLoginError(''),
+  })
+
+  const mfaMutation = useMutation({
+    mutationFn: () => operatorLoginMfa(mfaChallenge!.challenge_token, mfaCode),
+    onSuccess: (result) => completeLogin(result),
+    onError: (mutationError) => {
+      if (mutationError instanceof ApiError && (mutationError.code === 'mfa_challenge_invalid' || mutationError.status === 400)) {
+        setMfaChallenge(null)
+        setMfaCode('')
+      }
     },
   })
 
+  function completeLogin(result: OperatorLoginSuccess) {
+    sessionStorage.setItem('nover.operatorToken', result.access_token)
+    setAdminToken(result.access_token)
+    queryClient.setQueryData(['operator-session', result.access_token], result.session)
+    setPassword('')
+    setMfaChallenge(null)
+    setMfaCode('')
+    setUseRecoveryCode(false)
+    setLoginError('')
+    toast.success(`已登录：${result.session.display_name || result.session.username}`)
+  }
+
   function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    setLoginError('')
     loginMutation.mutate()
+  }
+
+  function submitMfaCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const code = mfaCode.trim()
+    if (!code) {
+      setLoginError('请输入身份验证器验证码或恢复码。')
+      return
+    }
+    if (!useRecoveryCode && !/^\d{6}$/.test(code)) {
+      setLoginError('动态验证码是 6 位数字；如果身份验证器不可用，请切换到恢复码输入。')
+      return
+    }
+    setLoginError('')
+    mfaMutation.mutate()
+  }
+
+  function cancelMfaChallenge() {
+    setMfaChallenge(null)
+    setMfaCode('')
+    setUseRecoveryCode(false)
+    setLoginError('')
   }
 
   async function disconnect() {
@@ -97,6 +153,9 @@ export function AdminPage() {
     sessionStorage.removeItem('nover.operatorToken')
     setAdminToken('')
     setPassword('')
+    setMfaChallenge(null)
+    setMfaCode('')
+    setUseRecoveryCode(false)
     setSelectedId('')
     setCreatingDraft(false)
     setCreatedCodes([])
@@ -107,8 +166,6 @@ export function AdminPage() {
     setSelectedId(productId)
     setCreatingDraft(false)
     setCreatedCodes([])
-    setNotice('')
-    setError('')
   }
 
   function startDraft() {
@@ -116,8 +173,6 @@ export function AdminPage() {
     setSelectedId('')
     setCreatingDraft(true)
     setCreatedCodes([])
-    setNotice('')
-    setError('')
   }
 
   if (adminToken && session.isLoading) {
@@ -125,20 +180,46 @@ export function AdminPage() {
   }
 
   if (!adminToken || session.isError || products.isError) {
+    const authError = loginError
+      || (mfaMutation.isError ? describeError(mfaMutation.error) : '')
+      || loginMutation.error?.message
+      || session.error?.message
+      || products.error?.message
+      || ''
     return (
       <section className="admin-lock surface-panel">
-        <div className="tool-icon"><LockKeyhole size={19} /></div>
-        <span className="section-kicker">OPERATOR WORKSPACE</span>
-        <h1 className="page-title">运营工作台</h1>
-        <p>使用运营账号登录，管理商品、交付文件和兑换凭证。</p>
-        <form className="stack-form" onSubmit={connect}>
+        <div className="tool-icon">{mfaChallenge ? <ShieldCheck size={19} /> : <LockKeyhole size={19} />}</div>
+        <span className="section-kicker">{mfaChallenge ? 'TWO-FACTOR VERIFICATION' : 'OPERATOR WORKSPACE'}</span>
+        <h1 className="page-title">{mfaChallenge ? '两步验证' : '运营工作台'}</h1>
+        <p>{mfaChallenge ? '账号密码已验证。请输入身份验证器中的动态验证码完成登录。' : '使用运营账号登录，管理商品、交付文件和兑换凭证。'}</p>
+        {mfaChallenge ? <form className="stack-form login-mfa-form" onSubmit={submitMfaCode}>
+          <label htmlFor="operator-mfa-code">{useRecoveryCode ? '恢复码' : '动态验证码'}</label>
+          <input
+            id="operator-mfa-code"
+            value={mfaCode}
+            onChange={(event) => { setMfaCode(event.target.value); setLoginError('') }}
+            autoComplete="one-time-code"
+            inputMode={useRecoveryCode ? 'text' : 'numeric'}
+            maxLength={useRecoveryCode ? 64 : 6}
+            placeholder={useRecoveryCode ? 'XXXX-XXXX-XXXX' : '6 位数字'}
+            autoFocus
+            required
+          />
+          <p className="field-note">{useRecoveryCode ? '恢复码格式为 XXXX-XXXX-XXXX，可保留连字符。每个恢复码只能使用一次。' : '动态验证码每 30 秒更新一次。身份验证器不可用时，可切换为恢复码。'}</p>
+          {authError && <StatusMessage>{authError}</StatusMessage>}
+          <div className="login-mfa-actions">
+            <button className="button button-primary" type="submit" disabled={mfaMutation.isPending}><ShieldCheck size={16} />{mfaMutation.isPending ? '验证中…' : '验证并进入'}</button>
+            <button className="button button-secondary" type="button" onClick={cancelMfaChallenge}>返回重新登录</button>
+          </div>
+          <button className="text-icon-button login-mfa-switch" type="button" onClick={() => { setUseRecoveryCode((current) => !current); setMfaCode(''); setLoginError('') }}>{useRecoveryCode ? '改用动态验证码' : '使用恢复码'}</button>
+        </form> : <form className="stack-form" onSubmit={connect}>
           <label htmlFor="operator-username">账号</label>
           <input id="operator-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required />
           <label htmlFor="operator-password">密码</label>
           <input id="operator-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
-          {(session.isError || products.isError || loginMutation.isError) && <StatusMessage>{loginMutation.error?.message ?? session.error?.message ?? products.error?.message ?? '登录状态已失效，请重新登录。'}</StatusMessage>}
+          {(session.isError || products.isError || loginMutation.isError) && <StatusMessage>{authError || '登录状态已失效，请重新登录。'}</StatusMessage>}
           <button className="button button-primary" type="submit" disabled={loginMutation.isPending}><LockKeyhole size={16} />{loginMutation.isPending ? '登录中…' : '进入工作台'}</button>
-        </form>
+        </form>}
       </section>
     )
   }
@@ -166,8 +247,7 @@ export function AdminPage() {
   }
 
   function handleError(error: Error) {
-    setError(error.message)
-    setNotice('')
+    toast.error(error.message)
   }
 
   return (
@@ -206,7 +286,7 @@ export function AdminPage() {
           <aside className="product-studio-sidebar">
             <button className="button button-secondary studio-new-button" type="button" onClick={startDraft}><Plus size={15} />新建商品草稿</button>
             <div className="product-picker-head"><span>商品</span><button className="text-icon-button" onClick={() => void reloadProducts()} title="刷新商品"><RefreshCw size={14} />刷新</button></div>
-            {products.isLoading ? <div className="empty-state">正在读取…</div> : products.data?.items.length ? (
+            {products.isLoading ? <SkeletonLines lines={4} label="正在读取商品列表" /> : products.data?.items.length ? (
               <div className="product-picker">
                 {products.data.items.map((item) => <button type="button" key={item.id} className={`product-option ${selectedId === item.id && !creatingDraft ? 'is-selected' : ''}`} onClick={() => selectProduct(item.id)}><span>{item.name}</span><span className={`product-option-status product-option-status--${item.status.toLowerCase()}`}>{productStatusLabel(item.status)}</span></button>)}
               </div>
@@ -218,7 +298,7 @@ export function AdminPage() {
             product={creatingDraft ? undefined : selectedProduct}
             isCreating={creatingDraft}
             onSaved={async (product) => { selectProduct(product.id); await reloadProducts() }}
-            onNotice={(message) => { setNotice(message); setError('') }}
+            onNotice={(message) => toast.success(message)}
             onError={handleError}
           />
         </div>
@@ -228,24 +308,24 @@ export function AdminPage() {
 
         <section className="admin-section">
           <div className="admin-section-heading"><div className="tool-icon tool-icon--amber"><ImagePlus size={18} /></div><div><span className="section-kicker">STEP 02 · VISUALS</span><h2>商品效果图片</h2></div></div>
-          <ProductImageManager key={selectedId} token={adminToken} productId={selectedId} productName={selectedProduct?.name ?? ''} productStatus={selectedProduct?.status} onUpdated={async () => { setNotice('商品效果图片已更新。'); setError(''); await reloadProducts() }} onError={handleError} />
+          <ProductImageManager key={selectedId} token={adminToken} productId={selectedId} productName={selectedProduct?.name ?? ''} productStatus={selectedProduct?.status} onUpdated={async () => { toast.success('商品效果图片已更新。'); await reloadProducts() }} onError={handleError} />
         </section>
 
         <div className="version-delivery-grid">
           <section className="admin-section release-management-section">
             <div className="admin-section-heading"><div className="tool-icon tool-icon--blue"><GitBranch size={18} /></div><div><span className="section-kicker">STEP 03 · VERSION</span><h2>版本与更新说明</h2></div></div>
-            <ReleaseManager token={adminToken} product={selectedProduct} onNotice={(message) => { setNotice(message); setError('') }} onError={handleError} />
+            <ReleaseManager token={adminToken} product={selectedProduct} onNotice={(message) => toast.success(message)} onError={handleError} />
           </section>
 
           <section className="admin-section">
             <div className="admin-section-heading"><div className="tool-icon tool-icon--blue"><FileUp size={18} /></div><div><span className="section-kicker">STEP 04 · DELIVERY</span><h2>上传版本交付文件</h2></div></div>
-            <AssetUpload key={selectedId} token={adminToken} productId={selectedId} enabled={selectedProduct?.status !== 'ARCHIVED'} onUploaded={async () => { setNotice('文件已绑定版本并记录校验值。'); setError(''); await reloadProducts() }} onError={handleError} />
+            <AssetUpload key={selectedId} token={adminToken} productId={selectedId} enabled={selectedProduct?.status !== 'ARCHIVED'} onUploaded={async () => { toast.success('文件已绑定版本并记录校验值。'); await reloadProducts() }} onError={handleError} />
           </section>
         </div>
 
         <section className="admin-section publish-product-section">
           <div className="admin-section-heading"><div className="tool-icon tool-icon--green"><Send size={18} /></div><div><span className="section-kicker">STEP 05 · PUBLISH</span><h2>发布商品与版本</h2></div></div>
-          <ProductPublishControl token={adminToken} product={selectedProduct} onPublished={async () => { setNotice(`「${selectedProduct?.name ?? '商品'}」已发布；现在可以发布已上传文件的版本。`); setError(''); await reloadProducts() }} onError={handleError} />
+          <ProductPublishControl token={adminToken} product={selectedProduct} onPublished={async () => { toast.success(`「${selectedProduct?.name ?? '商品'}」已发布；现在可以发布已上传文件的版本。`); await reloadProducts() }} onError={handleError} />
         </section>
 
       </div></>}
@@ -254,14 +334,14 @@ export function AdminPage() {
         <section className="admin-section code-issuer-panel">
           <div className="admin-section-heading"><div className="tool-icon tool-icon--amber"><TicketCheck size={18} /></div><div><span className="section-kicker">CODE BINDING</span><h2>生成并绑定兑换码</h2></div></div>
           <label className="code-product-select"><span>绑定商品</span><select value={selectedId} onChange={(event) => selectProduct(event.target.value)}>{products.data?.items.map((item) => <option key={item.id} value={item.id}>{item.name} · {productStatusLabel(item.status)}</option>)}</select></label>
-          <CodeIssuer key={selectedId} token={adminToken} productId={selectedId} productName={selectedProduct?.name ?? ''} productStatus={selectedProduct?.status} codes={createdCodes} onIssued={(codes) => { setCreatedCodes(codes); setNotice(`已为「${selectedProduct?.name ?? '当前商品'}」签发 ${codes.length} 个兑换码，请立即复制保存。`); setError('') }} onError={handleError} />
+          <CodeIssuer key={selectedId} token={adminToken} productId={selectedId} productName={selectedProduct?.name ?? ''} productStatus={selectedProduct?.status} codes={createdCodes} onIssued={(codes) => { setCreatedCodes(codes); toast.success(`已为「${selectedProduct?.name ?? '当前商品'}」签发 ${codes.length} 个兑换码，请立即复制保存。`) }} onError={handleError} />
         </section>
       <section className="activity-section code-activity-section">
         <div className="admin-section-heading"><div className="tool-icon"><TicketCheck size={18} /></div><div><span className="section-kicker">RECENT DELIVERIES</span><h2>兑换与下载记录</h2></div><button className="text-icon-button activity-refresh" title="刷新记录" onClick={() => void reloadActivity()}><RefreshCw size={14} />刷新</button></div>
         {activity.isError && <StatusMessage>{activity.error.message}</StatusMessage>}
         {activity.isLoading ? <div className="empty-state">正在读取记录…</div> : activity.data?.items.length ? (
           <div className="activity-list">
-            {activity.data.items.map((item) => <ActivityRow key={item.code_id} item={item} token={adminToken} canManage={hasPermission('code.manage')} onChanged={async (message) => { setNotice(message); setError(''); await reloadActivity() }} onError={handleError} />)}
+            {activity.data.items.map((item) => <ActivityRow key={item.code_id} item={item} token={adminToken} canManage={hasPermission('code.manage')} onChanged={async (message) => { toast.success(message); await reloadActivity() }} onError={handleError} />)}
           </div>
         ) : <div className="empty-state">签发兑换码后，记录会显示在这里。</div>}
       </section></div>}
@@ -270,8 +350,6 @@ export function AdminPage() {
       {view === 'settings' && <PlatformSettingsView token={adminToken} canManage={hasPermission('settings.manage')} />}
       {view === 'account' && <AccountView token={adminToken} />}
       {view === 'audit' && (hasPermission('audit.read') ? <AuditView token={adminToken} /> : <PermissionNotice title="审计日志" description="当前角色没有审计日志权限（audit.read）。请联系空间所有者或管理员分配权限后再查看。" />)}
-      {error && <StatusMessage>{error}</StatusMessage>}
-      {notice && <StatusMessage kind="success">{notice}</StatusMessage>}
     </section>
   )
 }
@@ -336,6 +414,7 @@ function PlatformSettingsView({ token, canManage }: { token: string; canManage: 
   }
   return <section className="platform-settings-view">
     <div className="overview-heading"><div><span className="section-kicker">DEPLOYMENT CONTROL</span><h2>前后端与路由设置</h2></div><span>保存规划 · 部署时生效</span></div>
+    <SystemStatusCard token={token} />
     <div className="settings-grid">
       <form className="admin-section settings-form stack-form" onSubmit={(event) => { event.preventDefault(); if (canManage) mutation.mutate() }}>
         <div className="admin-section-heading"><div className="tool-icon"><ServerCog size={18} /></div><div><span className="section-kicker">ORIGINS</span><h2>服务地址</h2></div></div>
@@ -355,6 +434,79 @@ function PlatformSettingsView({ token, canManage }: { token: string; canManage: 
         <div className="settings-security-note"><ShieldCheck size={16} /><span>非标路径只降低随机扫描噪声，身份认证、RBAC、限流和审计仍是访问边界。</span></div>
       </aside>
     </div>
+  </section>
+}
+
+function formatAppVersion(version: string) {
+  if (!version) return '未知'
+  if (version === 'dev') return 'dev'
+  return version.startsWith('v') ? version : `v${version}`
+}
+
+function formatUptime(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds))
+  const days = Math.floor(total / 86400)
+  const hours = Math.floor((total % 86400) / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (days > 0) return `${days} 天 ${hours} 小时`
+  if (hours > 0) return `${hours} 小时 ${minutes} 分钟`
+  if (minutes > 0) return `${minutes} 分钟`
+  return `${total} 秒`
+}
+
+function formatLatency(latencyMs: number) {
+  return `${latencyMs.toFixed(1)} ms`
+}
+
+function SystemStatusCard({ token }: { token: string }) {
+  // 运行中 API 的状态：版本、数据库就绪与延迟、迁移计划、私有存储可写性。
+  const status = useQuery({ queryKey: ['system-status', token], queryFn: () => loadSystemStatus(token), retry: false, refetchInterval: 60_000 })
+  // 部署设置页本身已由 settings.read 保护；若接口仍判定权限不足，整卡隐藏而不是报错。
+  const permissionDenied = status.error instanceof ApiError && (status.error.status === 403 || status.error.code === 'operator_permission_required')
+  if (permissionDenied) return null
+  const data: SystemStatus | undefined = status.data
+  return <section className="admin-section system-status-card" aria-labelledby="system-status-heading">
+    <div className="admin-section-heading">
+      <div className="tool-icon tool-icon--blue"><ServerCog size={18} /></div>
+      <div><span className="section-kicker">RUNTIME &amp; STORAGE</span><h2 id="system-status-heading">系统状态</h2></div>
+      <button className="text-icon-button system-status-refresh" type="button" title="刷新系统状态" onClick={() => void status.refetch()} disabled={status.isFetching}><RefreshCw size={14} />{status.isFetching ? '刷新中…' : '刷新'}</button>
+    </div>
+    {status.isError && <StatusMessage>{describeError(status.error)}</StatusMessage>}
+    {!status.isError && (status.isLoading || !data) && <SkeletonLines lines={3} label="正在读取系统状态" />}
+    {!status.isError && data && <>
+      {data.database.migrations.pending > 0 && <div className="system-status-alert" role="alert">
+        <AlertTriangle size={18} aria-hidden="true" />
+        <div><strong>有 {data.database.migrations.pending} 个待应用迁移</strong><span>重启 API 会在启动时自动应用迁移；也可以在服务器执行 migrate 命令后再刷新本页。升级完成前旧版本可能无法读取新 schema。</span></div>
+      </div>}
+      <div className="system-status-facts">
+        <article className="system-status-fact">
+          <span><ServerCog size={13} aria-hidden="true" />应用版本</span>
+          <strong>{formatAppVersion(data.app.version)}</strong>
+          <small>commit {data.app.commit || 'unknown'} · {data.app.environment || 'unknown'}</small>
+        </article>
+        <article className="system-status-fact">
+          <span><Clock3 size={13} aria-hidden="true" />运行时长</span>
+          <strong>{formatUptime(data.app.uptime_seconds)}</strong>
+          <small>{data.app.built_at && data.app.built_at !== 'unknown' ? `构建于 ${data.app.built_at}` : '构建时间未注入'}</small>
+        </article>
+        <article className={`system-status-fact ${data.database.ready ? 'system-status-fact--ok' : 'system-status-fact--warn'}`}>
+          <span><Database size={13} aria-hidden="true" />数据库</span>
+          <strong>{data.database.ready ? '连接就绪' : '连接异常'}</strong>
+          <small>{formatLatency(data.database.latency_ms)} 响应 · 结构{data.database.schema_ready ? '就绪' : '未就绪'}</small>
+        </article>
+        <article className={`system-status-fact ${data.database.migrations.pending > 0 ? 'system-status-fact--warn' : ''}`}>
+          <span><GitBranch size={13} aria-hidden="true" />迁移</span>
+          <strong>{data.database.migrations.applied} 个已应用</strong>
+          <small>待应用 {data.database.migrations.pending} · 最新 {data.database.migrations.latest || '—'}</small>
+        </article>
+        <article className={`system-status-fact ${data.storage.writable ? 'system-status-fact--ok' : 'system-status-fact--warn'}`}>
+          <span><HardDrive size={13} aria-hidden="true" />私有存储</span>
+          <strong>{data.storage.writable ? '可写入' : '不可写'}</strong>
+          <small title={data.storage.path}>{data.storage.path || '未配置存储路径'}</small>
+        </article>
+      </div>
+      <p className="system-status-note">状态每 60 秒自动刷新；版本与迁移信息来自运行中的 API 构建，可能与页面静态资源版本不同步。</p>
+    </>}
   </section>
 }
 

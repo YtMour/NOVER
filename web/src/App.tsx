@@ -4,13 +4,22 @@ import { useQuery } from '@tanstack/react-query'
 import { Moon, Sun, UserPlus } from 'lucide-react'
 import { BrandMark } from './components/BrandMark'
 import { PageMotion } from './components/PageMotion'
+import { RouteLoading } from './components/Skeleton'
 import { DeliveryPage } from './features/delivery/DeliveryPage'
 import { RedeemPage } from './features/redeem/RedeemPage'
-import { loadServiceHealth } from './lib/api'
+import { loadMeta, loadServiceHealth } from './lib/api'
 
 type Theme = 'light' | 'dark'
 const ProductDetailPage = lazy(() => import('./features/redeem/ProductDetailPage').then((module) => ({ default: module.ProductDetailPage })))
 const JoinPage = lazy(() => import('./features/join/JoinPage').then((module) => ({ default: module.JoinPage })))
+
+// 构建元数据里的版本可能带或不带前缀 v，统一显示为 vX.Y.Z，避免出现 vv0.5.0；
+// 未注入版本的开发构建保留后端原值 dev，不强行加 v 前缀。
+function displayVersion(version?: string) {
+  if (!version) return ''
+  if (version === 'dev') return 'dev'
+  return version.startsWith('v') ? version : `v${version}`
+}
 
 function resolveInitialTheme(): Theme {
   const saved = localStorage.getItem('nover.theme')
@@ -23,6 +32,9 @@ function Shell() {
   const location = useLocation()
   const [theme, setTheme] = useState<Theme>(resolveInitialTheme)
   const health = useQuery({ queryKey: ['service-health'], queryFn: loadServiceHealth, refetchInterval: 30_000, retry: false })
+  // 版本信息只做展示增强：请求失败或字段缺失时页脚保持原样，绝不阻塞页面。
+  const meta = useQuery({ queryKey: ['meta'], queryFn: loadMeta, retry: false, staleTime: 5 * 60_000 })
+  const version = displayVersion(meta.data?.version)
   const deliveryToken = sessionStorage.getItem('nover.deliveryToken') ?? ''
   const currentPath = location.pathname
 
@@ -64,7 +76,7 @@ function Shell() {
       </header>
       <main className="main-content" id="main" tabIndex={-1}>
         <PageMotion>
-          <Suspense fallback={<div className="loading-line">正在打开页面…</div>}>
+          <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<RedeemPage />} />
               <Route path="/spaces/:spaceSlug" element={<RedeemPage />} />
@@ -79,7 +91,10 @@ function Shell() {
       </main>
       <footer className="site-footer">
         <div><span>© {new Date().getFullYear()} NOVER</span><span className="footer-dot" /><span>探索数字，发现更多可能。</span></div>
-        <span className={`footer-status ${health.isError ? 'footer-status--offline' : ''}`}><i />{health.isLoading ? '正在连接' : health.isError ? '服务暂不可用' : '交付服务在线'}</span>
+        <span className="footer-runtime">
+          <span className={`footer-status ${health.isError ? 'footer-status--offline' : ''}`}><i />{health.isLoading ? '正在连接' : health.isError ? '服务暂不可用' : '交付服务在线'}</span>
+          {version && <span className="footer-version" title={`当前交付版本 ${version}`} aria-label={`当前交付版本 ${version}`}>{version}</span>}
+        </span>
       </footer>
     </div>
   )

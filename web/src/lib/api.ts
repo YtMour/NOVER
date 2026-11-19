@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { Delivery, DownloadTicket, Product, ProductList, RedeemResponse } from '../types'
+import type { Delivery, DownloadTicket, Meta, Product, ProductList, RedeemResponse } from '../types'
 
 export class ApiError extends Error {
   constructor(message: string, readonly code: string, readonly status: number, readonly retryAfter?: number) {
@@ -58,6 +58,11 @@ function withBearer(token: string): HeadersInit {
 
 export function loadServiceHealth() {
   return request<{ status: 'ready' }>('/readyz')
+}
+
+/** 公开版本元数据；页脚据此显示当前部署版本，接口失败时静默隐藏。 */
+export function loadMeta() {
+  return request<Meta>('/api/v1/meta')
 }
 
 export function loadPublicProducts(spaceSlug?: string) {

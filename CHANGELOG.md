@@ -2,6 +2,84 @@
 
 本文件记录 NOVER 对外可见的版本变化。版本号与 git tag（建议 `v0.2.0`）对齐。
 
+## [0.5.0] - 2026-11-19
+
+主题：可升级部署与测试体验。
+
+### 升级与迁移
+
+- 新增 `nover-migrate` CLI：`-status`（只读迁移计划）、`-apply`（单事务应用）、`-json`；Docker 镜像同时包含该命令，Compose 新增 `ops` profile 的 `migrate` 服务。
+- `/api/v1/meta` 增加 `schema_version`；新增运营端点 `GET /api/v1/cp-7f3c/system/status`，返回版本/提交/环境、运行时长、数据库延迟、迁移 applied/pending/latest 与存储可写性。
+- 控制台“部署设置”新增系统状态卡；`pending > 0` 时醒目提示迁移待处理。用户端页脚与控制台顶栏显示构建版本。
+- 新增 `scripts/ops/upgrade.ps1` 本地升级/回滚：预检、自动备份、记录并打 `:previous` 镜像标签、构建启动、就绪等待、系统状态摘要；支持 `-DryRun` / `-BackendOnly` / `-SkipBackup` / `-Rollback`。
+- Compose 为 web/console 增加 Nginx 健康检查，并等待 api healthy 后启动。
+- 新增 [docs/upgrade.md](docs/upgrade.md)：升级前检查、一键升级、回滚、手工迁移、升级后验证与故障处理。
+
+### 测试体验
+
+- 新增真实 PostgreSQL 集成测试（`//go:build integration`）：迁移、登录、商品/版本/文件上传、兑换、交付、下载、退款、邀请、MFA 两步登录、系统状态。
+- 新增 CI 集成测试 job（PostgreSQL 17 service）；`scripts/verify.ps1` 新增 `-Integration` 与 `-ReportPath`（JSON 报告）。
+- `scripts/ops/README.md` 补充升级/回滚与迁移状态说明。
+
+### 体验与文档
+
+- 版本号 `0.5.0`；README/API/架构/开发/运维/路线图/AGENTS/CHANGELOG 同步；新增 v0.5.0 审计。
+- 升级界面：控制台系统状态卡、迁移待处理提示、版本展示。
+
+### 升级说明
+
+- 本版本无数据库结构变更（迁移仍为 `0001`–`0004`），升级只需重建镜像并重启；已有数据与权益不受影响。
+- 升级前建议执行 `scripts/ops/upgrade.ps1 -DryRun` 并确认备份；回滚只回退镜像，数据库迁移需用备份恢复。
+
+### 未包含
+
+- 自动回滚数据库迁移、蓝绿/多实例滚动升级。
+- 真实备份恢复/升级回滚演练、告警/追踪、RLS、S3/扫描。
+
+## [0.4.0] - 2026-11-19
+
+主题：可信身份 · 体验打磨。
+
+### 身份与安全
+
+- 运营账号支持可选 **TOTP 两步验证**（SHA-1 / 6 位 / 30 秒，允许 ±1 窗口）：设置返回 secret、otpauth URI 与 10 个一次性恢复码；验证码通过后启用；登录改为两步（challenge token 5 分钟有效），支持恢复码登录；关闭需密码 + 验证码/恢复码。
+- TOTP secret 使用由 `OPERATOR_TOKEN_KEY` 派生的 AES-GCM 密钥加密存储；恢复码只保存 SHA-256 哈希且一次性使用。
+- 新增**一次性成员邀请**：OWNER/ADMIN 创建邀请后获得一次性 token 与链接，成员在控制台 `accept` 页设置密码后账号激活；支持查看/撤销未使用邀请；过期/撤销后可重新邀请。
+- 新增**管理员密码重置链接**（2 小时有效）：成员设置新密码后递增 `token_version` 并撤销其全部会话。
+- 系统不发送邮件，邀请/重置链接由运营者线下传递；`POST /members` 直接创建成员保留为兼容入口。
+- 新增错误码与审计事件：`invalid_mfa_code`、`mfa_challenge_invalid`、`invalid_invitation`、`invitation_expired`、`MFA_ENABLED`、`MFA_DISABLED`、`MFA_RECOVERY_USED`、`MEMBER_INVITED`、`INVITATION_ACCEPTED`、`PASSWORD_RESET_COMPLETED`。
+
+### 运维与 DX
+
+- 新增 `GET /metrics` Prometheus 文本指标（按路由的请求计数、in-flight、运行时长、构建信息）；指标抓取自身不计入统计。
+- 新增 `scripts/ops/backup.ps1`、`restore.ps1` 与说明：数据库 dump + 私有卷归档 + manifest 校验和，恢复必须显式确认；默认支持 dry-run。
+- 新增 [docs/design-system.md](docs/design-system.md)：颜色/字体/间距/组件/动效/可访问性与页面视觉验收清单。
+- 新增第四套跨平台冒烟 `identity-mfa-invitation-smoke.ps1`（PowerShell 内置 TOTP 实现与 RFC 自检），并纳入 `run-all.ps1`。
+
+### 用户体验与视觉
+
+- 用户端：商品效果图光箱（键盘/焦点管理/reduced-motion）、目录/详情/交付骨架屏、Toast 通知、空状态插画、按钮/卡片/移动端视觉打磨。
+- 控制台：两步登录与 MFA 设置/关闭界面、邀请成员与重置密码链接生成/复制、公开 `accept` 设置密码页（支持深链/刷新）、全局 Toast、加载骨架屏、移动端导航与视觉统一。
+- 可访问性：新光箱/Toast/接受页均支持键盘、`aria-live`/`aria-modal` 与焦点回归；持续保持品牌 token 与深浅色对比度。
+
+### 工程
+
+- 迁移 `0004_mfa_and_invitations.sql`：`operator_users` MFA 列与 `operator_invitations` 表/索引。
+- 新增 `internal/totp`（含 RFC 6238 向量测试）、`internal/metrics` 与相应单元测试；后端测试函数进一步增加。
+- 登录限流保持 30 次/分钟，新增 MFA 验证（20 次/分钟）、邀请/重置创建（30 次/小时）、邀请接受（10 次/小时）限流。
+- 版本号 `0.4.0`；文档（API/架构/产品定义/路线图/运维/开发/AGENTS）同步。
+
+### 升级说明
+
+- 升级无需手工迁移：启动自动应用 `0004`。MFA 默认关闭，历史账号行为不变。
+- 不发送邮件；邀请/重置链接由运营者复制线下传递。
+- 启用 MFA 前请保存恢复码；丢失验证器与恢复码后当前版本没有后台强制重置入口，需要数据库级运维介入。
+
+### 未包含
+
+- Passkey/WebAuthn、强制 MFA 策略、邮件通知。
+- RLS、跨租户负向矩阵全覆盖、S3/上传扫描、告警/追踪、多实例共享限流、外部退款同步。
+
 ## [0.3.0] - 2026-11-19
 
 主题：可运营闭环（商品资料 v2、退款售后、成员与账户安全、租户审计）。

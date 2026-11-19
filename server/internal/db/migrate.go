@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -123,6 +124,74 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 
 func loadMigrations() ([]Migration, error) {
 	return parseMigrations(migrationFiles, "migrations")
+}
+
+// MigrationState describes one embedded migration and whether the target
+// database has applied it.
+type MigrationState struct {
+	Version   string     `json:"version"`
+	Name      string     `json:"name"`
+	Applied   bool       `json:"applied"`
+	AppliedAt *time.Time `json:"applied_at,omitempty"`
+}
+
+// MigrationPlan is a read-only view of the migration state, used by the
+// migrate CLI and the operator system-status endpoint.
+type MigrationPlan struct {
+	Items       []MigrationState `json:"items"`
+	Applied     int              `json:"applied"`
+	Pending     int              `json:"pending"`
+	Latest      string           `json:"latest"`
+	SchemaReady bool             `json:"schema_ready"`
+}
+
+// Plan reports which embedded migrations are applied without modifying the
+// database. A missing schema_migrations table (fresh or pre-baseline install)
+// is reported as all migrations pending; running Migrate resolves it.
+func Plan(ctx context.Context, pool *pgxpool.Pool) (MigrationPlan, error) {
+	migrations, err := loadMigrations()
+	if err != nil {
+		return MigrationPlan{}, err
+	}
+	applied := make(map[string]time.Time)
+	var tableExists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.schema_migrations') IS NOT NULL`).Scan(&tableExists); err != nil {
+		return MigrationPlan{}, fmt.Errorf("detect schema_migrations: %w", err)
+	}
+	if tableExists {
+		rows, err := pool.Query(ctx, `SELECT version, applied_at FROM schema_migrations`)
+		if err != nil {
+			return MigrationPlan{}, fmt.Errorf("load applied migrations: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var version string
+			var appliedAt time.Time
+			if err := rows.Scan(&version, &appliedAt); err != nil {
+				return MigrationPlan{}, fmt.Errorf("scan applied migration: %w", err)
+			}
+			applied[version] = appliedAt
+		}
+		if err := rows.Err(); err != nil {
+			return MigrationPlan{}, fmt.Errorf("iterate applied migrations: %w", err)
+		}
+	}
+
+	plan := MigrationPlan{Items: make([]MigrationState, 0, len(migrations)), SchemaReady: tableExists}
+	for _, migration := range migrations {
+		state := MigrationState{Version: migration.Version, Name: migration.Name}
+		if appliedAt, ok := applied[migration.Version]; ok {
+			state.Applied = true
+			appliedAtCopy := appliedAt
+			state.AppliedAt = &appliedAtCopy
+			plan.Applied++
+			plan.Latest = migration.Version
+		} else {
+			plan.Pending++
+		}
+		plan.Items = append(plan.Items, state)
+	}
+	return plan, nil
 }
 
 // parseMigrations reads and validates a migration directory. It is separate

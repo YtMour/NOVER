@@ -92,7 +92,23 @@ export type OperatorSession = {
   permissions: string[]
 }
 
-export type OperatorLoginResponse = { access_token: string; expires_at: string; session: OperatorSession }
+export type OperatorLoginSuccess = { access_token: string; expires_at: string; session: OperatorSession }
+// A password-only sign-in for an MFA-enabled account returns a short-lived
+// challenge instead of an access token; the second step trades it for a session.
+export type OperatorLoginMfaChallenge = { mfa_required: true; challenge_token: string; expires_at: string }
+export type OperatorLoginResponse = OperatorLoginSuccess | OperatorLoginMfaChallenge
+
+export type MfaStatus = {
+  enabled: boolean
+  enabled_at?: string | null
+  recovery_codes_remaining: number
+}
+
+export type MfaSetupResponse = {
+  secret: string
+  otpauth_url: string
+  recovery_codes: string[]
+}
 
 export type TenantMember = {
   membership_id: string
@@ -101,7 +117,7 @@ export type TenantMember = {
   display_name: string
   role: OperatorSession['role']
   platform_role: OperatorSession['platform_role']
-  status: 'ACTIVE' | 'SUSPENDED'
+  status: 'PENDING' | 'ACTIVE' | 'SUSPENDED'
   joined_at: string
   last_active_at: string | null
 }
@@ -115,7 +131,50 @@ export type MemberCreateInput = {
 
 export type MemberPatchInput = {
   role?: Exclude<OperatorSession['role'], 'OWNER'>
-  status?: TenantMember['status']
+  status?: 'ACTIVE' | 'SUSPENDED'
+}
+
+export type InvitationKind = 'INVITE' | 'PASSWORD_RESET'
+export type InvitationStatus = 'PENDING' | 'USED' | 'EXPIRED' | 'REVOKED'
+
+export type MemberInvitation = {
+  id: string
+  kind: InvitationKind
+  username: string
+  display_name: string
+  role: OperatorSession['role']
+  status: InvitationStatus
+  expires_at: string
+  created_at: string
+}
+
+export type MemberInvitationInput = {
+  username: string
+  display_name: string
+  role: Exclude<OperatorSession['role'], 'OWNER'>
+}
+
+export type MemberInvitationCreated = {
+  id: string
+  kind: 'INVITE'
+  username: string
+  display_name: string
+  role: Exclude<OperatorSession['role'], 'OWNER'>
+  token: string
+  expires_at: string
+}
+
+export type MemberPasswordResetCreated = {
+  id: string
+  kind: 'PASSWORD_RESET'
+  username: string
+  token: string
+  expires_at: string
+}
+
+export type InvitationAcceptResponse = {
+  kind: InvitationKind
+  username: string
 }
 
 export type CodeAction = 'SUSPEND' | 'RESUME' | 'REVOKE' | 'REFUND'
@@ -205,4 +264,41 @@ export type AuditEventQuery = {
   offset?: number
   action?: string
   resource_type?: string
+}
+
+// 公开构建元数据（GET /api/v1/meta）。
+export type Meta = {
+  name: string
+  version: string
+  commit: string
+  built_at: string
+  environment: string
+  schema_version?: string
+}
+
+// 运营系统状态（GET /api/v1/{operator API}/system/status，settings.read）。
+export type SystemStatus = {
+  app: {
+    name?: string
+    version: string
+    commit: string
+    built_at?: string
+    environment: string
+    uptime_seconds: number
+  }
+  database: {
+    ready: boolean
+    latency_ms: number
+    migrations: {
+      applied: number
+      pending: number
+      latest: string
+    }
+    schema_ready: boolean
+  }
+  storage: {
+    path: string
+    writable: boolean
+  }
+  migrations_error?: string
 }

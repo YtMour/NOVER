@@ -1,11 +1,13 @@
-import { ArrowLeft, ArrowRight, CalendarClock, Check, Cpu, Download, FileText, KeyRound, RefreshCw, ShieldCheck } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { ArrowLeft, ArrowRight, CalendarClock, Check, Cpu, Download, FileText, KeyRound, Maximize2, RefreshCw, ShieldCheck } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Product } from '../../types'
 import { getDemoProductVisual } from '../../lib/productVisuals'
 import { updatePolicyLabel } from '../../lib/productProfile'
+import { EmptyState } from '../../components/EmptyState'
+import { Lightbox } from '../../components/Lightbox'
 
 export function ProductDetailView({ product, preview = false, imageURLs, backTo = '/#catalog', redeemTo = '/#redeem' }: { product: Product; preview?: boolean; imageURLs?: Record<string, string>; backTo?: string; redeemTo?: string }) {
   const fallback = getDemoProductVisual(product.id)
@@ -16,6 +18,12 @@ export function ProductDetailView({ product, preview = false, imageURLs, backTo 
     const image = product.images?.find((item) => item.url === source)
     return image ? imageURLs[image.id] ?? source : source
   }
+  const [lightbox, setLightbox] = useState<{ index: number; trigger: HTMLElement | null } | null>(null)
+  const galleryImages = images.map((image, index) => ({
+    id: image.id,
+    src: imageSource(image) ?? '',
+    alt: image.alt_text || `${product.name || '商品'}效果图 ${index + 1}`,
+  }))
 
   // v0.3.0 商品资料：旧版 API 不返回这些字段，统一按空值处理，空区域不渲染。
   const sectionSuffix = preview ? 'preview' : 'public'
@@ -58,9 +66,27 @@ export function ProductDetailView({ product, preview = false, imageURLs, backTo 
       {images.length ? <section className="product-gallery" aria-label={`${product.name || '商品'}效果图片`}>
         {images.map((image, index) => {
           const source = imageSource(image)
-          return <figure key={image.id} className={`product-gallery-item ${index === 0 ? 'product-gallery-item--featured' : ''}`}>{source ? <img src={source} alt={image.alt_text || `${product.name}效果图 ${index + 1}`} loading={preview || index === 0 ? 'eager' : 'lazy'} /> : <div className="product-gallery-loading">正在读取效果图…</div>}<figcaption>{image.alt_text || `${product.name || '商品'}效果图 ${index + 1}`}</figcaption></figure>
+          const alt = galleryImages[index].alt
+          return <figure key={image.id} className={`product-gallery-item ${index === 0 ? 'product-gallery-item--featured' : ''}`}>
+            {source ? (
+              <button className="product-gallery-trigger" type="button" aria-label={`放大查看：${alt}`} title="点击放大查看" onClick={(event) => setLightbox({ index, trigger: event.currentTarget })}>
+                <img src={source} alt={alt} loading={preview || index === 0 ? 'eager' : 'lazy'} />
+                <span className="product-gallery-zoom" aria-hidden="true"><Maximize2 size={14} />{index + 1} / {images.length}</span>
+              </button>
+            ) : <div className="product-gallery-loading">正在读取效果图…</div>}
+            <figcaption>{alt}</figcaption>
+          </figure>
         })}
-      </section> : <section className="product-gallery-empty"><span>PRODUCT PREVIEW</span><p>添加效果图后将在这里展示</p></section>}
+      </section> : <section className="product-gallery-empty" aria-label="商品效果图"><EmptyState title="效果图整理中" description="添加效果图后将在这里展示" /></section>}
+
+      {lightbox && <Lightbox
+        images={galleryImages}
+        index={lightbox.index}
+        label={`${product.name || '商品'}效果图片预览`}
+        returnFocus={lightbox.trigger}
+        onIndexChange={(index) => setLightbox((current) => current ? { ...current, index } : current)}
+        onClose={() => setLightbox(null)}
+      />}
 
       <section className="product-detail-section product-profile" aria-labelledby={`detail-profile-title-${sectionSuffix}`}>
         <div className="section-heading-row"><div><div className="eyebrow"><span className="eyebrow-line" /> PRODUCT PROFILE</div><h2 id={`detail-profile-title-${sectionSuffix}`}>商品资料</h2></div><span className="section-side-note">购买前请确认交付与授权范围</span></div>

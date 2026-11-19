@@ -58,3 +58,13 @@ export type Delivery = {
 export type ProductList = { items: Product[]; space_name?: string }
 export type RedeemResponse = { access_token: string; product_id: string }
 export type DownloadTicket = { url: string; expires_at: string }
+
+// 公开构建元数据（GET /api/v1/meta）。页脚只消费 version，其余字段用于诊断。
+export type Meta = {
+  name: string
+  version: string
+  commit: string
+  built_at: string
+  environment: string
+  schema_version?: string
+}

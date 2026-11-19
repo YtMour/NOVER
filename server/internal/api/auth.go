@@ -36,6 +36,23 @@ type operatorIdentity struct {
 
 type operatorContextKey struct{}
 
+const operatorIdentitySelect = `
+	SELECT u.id, u.username, u.display_name, COALESCE(u.platform_role, ''), u.token_version,
+	       m.id, m.tenant_id, t.name, t.slug, m.role, m.status,
+	       COALESCE(ja.id, ''), COALESCE(ja.status, '')
+	FROM operator_users u
+	JOIN tenant_memberships m ON m.user_id=u.id AND m.status IN ('PENDING', 'ACTIVE')
+	JOIN tenants t ON t.id=m.tenant_id AND t.status='ACTIVE'
+	LEFT JOIN join_applications ja ON ja.operator_user_id=u.id`
+
+func scanOperatorIdentity(row interface{ Scan(...any) error }, identity *operatorIdentity, tokenVersion *int) error {
+	return row.Scan(
+		&identity.UserID, &identity.Username, &identity.DisplayName, &identity.PlatformRole, tokenVersion,
+		&identity.MembershipID, &identity.TenantID, &identity.TenantName, &identity.TenantSlug, &identity.Role, &identity.MembershipStatus,
+		&identity.ApplicationID, &identity.ApplicationStatus,
+	)
+}
+
 func (a *App) operatorLogin(w http.ResponseWriter, r *http.Request) {
 	if allowed, retry := a.allowRequest(r, "operator-login", 30, time.Minute); !allowed {
 		setRetryAfter(w, retry)
@@ -55,10 +72,12 @@ func (a *App) operatorLogin(w http.ResponseWriter, r *http.Request) {
 	var identity operatorIdentity
 	var passwordHash string
 	var tokenVersion int
+	var mfaEnabled bool
 	err := a.db.QueryRow(r.Context(), `
 		SELECT u.id, u.username, u.display_name, u.password_hash, COALESCE(u.platform_role, ''), u.token_version,
 		       m.id, m.tenant_id, t.name, t.slug, m.role, m.status,
-		       COALESCE(ja.id, ''), COALESCE(ja.status, '')
+		       COALESCE(ja.id, ''), COALESCE(ja.status, ''),
+		       (u.mfa_enabled_at IS NOT NULL AND u.mfa_secret IS NOT NULL)
 		FROM operator_users u
 		JOIN tenant_memberships m ON m.user_id=u.id AND m.status IN ('PENDING', 'ACTIVE')
 		JOIN tenants t ON t.id=m.tenant_id AND t.status='ACTIVE'
@@ -68,7 +87,7 @@ func (a *App) operatorLogin(w http.ResponseWriter, r *http.Request) {
 		LIMIT 1`, input.Username).Scan(
 		&identity.UserID, &identity.Username, &identity.DisplayName, &passwordHash, &identity.PlatformRole, &tokenVersion,
 		&identity.MembershipID, &identity.TenantID, &identity.TenantName, &identity.TenantSlug, &identity.Role, &identity.MembershipStatus,
-		&identity.ApplicationID, &identity.ApplicationStatus,
+		&identity.ApplicationID, &identity.ApplicationStatus, &mfaEnabled,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(input.Password))
@@ -84,7 +103,20 @@ func (a *App) operatorLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "operator_login_failed", "The username or password is incorrect.")
 		return
 	}
+	if mfaEnabled {
+		challenge, expiresAt, err := newMFAChallenge(a.cfg.OperatorTokenKey, identity.UserID)
+		if err != nil {
+			a.logError(r, "create mfa challenge failed", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "The sign-in challenge could not be created.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"mfa_required": true, "challenge_token": challenge, "expires_at": expiresAt})
+		return
+	}
+	a.completeOperatorLogin(w, r, identity, tokenVersion)
+}
 
+func (a *App) completeOperatorLogin(w http.ResponseWriter, r *http.Request, identity operatorIdentity, tokenVersion int) {
 	sessionID, err := randomID()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The operator session could not be created.")

@@ -121,7 +121,7 @@ server/
     clock/              可测试时间源
 ```
 
-当前实现尚未拆成上述模块，也没有 Redis cache 接口；本地私有存储使用 `STORAGE_DIR` 配置，MVP 限流保存在进程内。商品支持草稿、实时买家页预览、内容编辑、发布、下架和归档；版本草稿、版本文件绑定、版本发布和更新权益已实现。启动时自动执行版本化迁移（`server/internal/db/migrations/`）并记录校验和，历史幂等 schema 安装会被识别为基线；独立命令 `cmd/maintenance` 负责过期会话、票据、权益与孤儿文件清理；`internal/buildinfo` 注入版本信息并通过 `/api/v1/meta` 暴露；每个 API 请求输出结构化访问日志并返回 `X-Request-Id`。
+当前实现尚未拆成上述模块，也没有 Redis cache 接口；本地私有存储使用 `STORAGE_DIR` 配置，MVP 限流保存在进程内。商品支持草稿、实时买家页预览、内容编辑、发布、下架和归档；版本草稿、版本文件绑定、版本发布和更新权益已实现。启动时自动执行版本化迁移（`server/internal/db/migrations/`）并记录校验和，历史幂等 schema 安装会被识别为基线；独立命令 `cmd/maintenance` 负责过期会话、票据、权益与孤儿文件清理，`cmd/migrate` 提供迁移状态与手工应用；`internal/buildinfo` 注入版本信息并通过 `/api/v1/meta` 暴露，运营端点 `/api/v1/cp-7f3c/system/status` 汇总版本、迁移状态、数据库延迟与存储可写性；每个 API 请求输出结构化访问日志并返回 `X-Request-Id`。
 
 ## 5. 当前数据库模型
 
@@ -134,7 +134,12 @@ schema_migrations
 
 operator_users
   id, username, display_name, password_hash, platform_role, status,
-  token_version, created_at, updated_at
+  token_version, mfa_secret, mfa_pending_secret, mfa_recovery_hashes, mfa_enabled_at,
+  created_at, updated_at
+
+operator_invitations
+  id, tenant_id, user_id, membership_id, kind(INVITE/PASSWORD_RESET), role,
+  token_hash, created_by, expires_at, used_at, revoked_at, created_at
 
 tenant_memberships
   id, tenant_id, user_id, role, status, created_at, updated_at
@@ -254,7 +259,10 @@ MVP 使用 `private-assets` Docker 卷保存文件，应用数据库只记录对
 - 退款为运营手工动作：将兑换码标记 `REFUNDED` 并将关联权益 `REVOKED`，原因写入审计事件；外部平台退款自动同步仍待实现。
 - 兑换码只保存 HMAC/哈希；密钥从环境变量或密钥管理系统注入。
 - MVP 记录商品创建、文件上传、兑换码签发、凭证状态变更、退款与下载开始事件；业务审计事件已绑定当前租户，并提供租户审计日志查询；外部平台退款自动同步仍待实现。
+- 运营登录支持可选的 TOTP 两步验证（SHA-1/6 位/30 秒，允许 ±1 窗口）；secret 使用由 `OPERATOR_TOKEN_KEY` 派生的 AES-GCM 密钥加密存储，另生成 10 个一次性恢复码（只存 SHA-256 哈希）。登录第一步返回 5 分钟 challenge token，第二步校验 TOTP 或恢复码后才创建会话。
+- 成员邀请与密码重置使用一次性 token（只存哈希，72 小时/2 小时有效），由运营者线下传递链接；接受后启用账号或重置密码并撤销旧会话。系统不发送邮件。
 - 每个 API 请求输出结构化访问日志（`request_id`、`method`、`path`、`route`、`status`、`duration_ms`、`ip`），响应头返回 `X-Request-Id`；健康检查不写访问日志。`/api/v1/meta` 公开版本、提交与环境信息。
+- `GET /metrics` 提供 Prometheus 文本指标（请求计数、in-flight、运行时长、构建信息）；公网部署应在反向代理限制访问。
 - 兑换、票据签发和上传有进程内按 IP 限流；超限返回 `429` 与 `Retry-After` 秒数。重启会清空计数，多实例需要共享限流方案。
 - 下载事件当前不记录 IP 或 User-Agent。
 - Compose 卷持久化数据；备份与恢复流程仍待实现。
@@ -265,11 +273,12 @@ MVP 使用 `private-assets` Docker 卷保存文件，应用数据库只记录对
 当前 Compose 服务：
 
 ```text
-web         用户端 React 静态资源，默认 :45173
-console     运营端 React 静态资源，默认 :46173
-api         Go API，默认 :48080
+web         用户端 React 静态资源，默认 :45173（Nginx 健康检查）
+console     运营端 React 静态资源，默认 :46173（Nginx 健康检查）
+api         Go API，默认 :48080（/healthz 健康检查）
 db          PostgreSQL，默认仅回环 :5433
 maintenance 维护清理命令（Compose ops profile，按需运行）
+migrate     迁移状态/应用命令（Compose ops profile，按需运行）
 ```
 
 `web` 与 `console` 各自包含 Nginx 静态服务和 `/api` 反向代理。两个静态镜像独立构建；用户端镜像不包含运营页面。Compose 当前仅绑定到 loopback，不包含公网 TLS 终止。
@@ -287,11 +296,17 @@ MVP 使用 `private-assets` Docker 卷，适合单实例功能验证。后续可
 | 可恢复的交付访问凭证 | 已实现 |
 | 限额和短时下载票据 | 已实现 |
 | 商品版本、版本文件与更新权限 | 已实现；发布版本必须有文件，基础版本被签发后不可撤回 |
-| 数据库运营账号与可撤销会话 | 已实现；TOTP/Passkey、密码重置待实现 |
+| 数据库运营账号与可撤销会话 | 已实现；Passkey 与邮件通知待实现 |
 | 商品结构化资料与公开详情接口 | 已实现（亮点/授权/技术要求/支持期/更新策略） |
 | 更新策略快照与交付过滤 | 已实现（LIFETIME / TILL_DATE / CURRENT_ONLY） |
 | 手工退款与权益收回 | 已实现；外部平台退款自动同步待实现 |
 | 成员管理、改密与会话管理 | 已实现；MFA、邀请设密、全设备策略待完善 |
+| TOTP 两步验证与恢复码 | 已实现（可选启用，secret 加密存储） |
+| 一次性邀请与管理员重置密码 | 已实现；邮件发送与邀请备注待补 |
+| Prometheus `/metrics` | 已实现基础指标；告警与追踪待补 |
+| 迁移状态 CLI 与系统状态端点 | 已实现（`nover-migrate`、`/system/status`） |
+| 本地升级/回滚脚本与 Compose 健康检查 | 已实现；真实回滚演练待补 |
+| 真实 PostgreSQL 集成测试与 CI | 已实现（`-tags=integration`） |
 | 租户审计日志查询 | 已实现；导出与检索优化待实现 |
 | 版本化数据库迁移与校验和 | 已实现；历史安装自动基线与回滚 |
 | 维护清理命令（会话/票据/权益/孤儿文件） | 已实现；自动调度待接入 |

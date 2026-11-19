@@ -58,6 +58,41 @@ jobs:
       - name: go build
         run: go build ./...
 
+  integration:
+    name: 集成测试（真实 PostgreSQL）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: nover_test
+          POSTGRES_USER: nover
+          POSTGRES_PASSWORD: nover-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nover -d nover_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: server
+    env:
+      TEST_DATABASE_URL: postgres://nover:nover-test-password@127.0.0.1:5432/nover_test?sslmode=disable
+      TEST_STORAGE_DIR: ${{ runner.temp }}/nover-integration-storage
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: 运行集成测试
+        run: go test -tags=integration ./... -count=1
+
   frontend:
     name: "前端构建（${{ matrix.app }}）"
     runs-on: ubuntu-latest

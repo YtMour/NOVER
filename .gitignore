@@ -17,6 +17,10 @@ local-storage/
 private-assets/
 *.sqlite
 
+# Backup archives produced by scripts/ops/backup.ps1
+backups/
+*.dump
+
 # Logs and editor files
 *.log
 .idea/

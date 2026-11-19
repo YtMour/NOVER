@@ -47,12 +47,15 @@ func (a *App) requestLogger(next http.Handler) http.Handler {
 		if requestID != "" {
 			recorder.Header().Set("X-Request-Id", requestID)
 		}
+		// Do not count the scrape itself, otherwise in-flight is always 1 when
+		// a Prometheus scraper reads /metrics.
+		var done func(method, route string, status int)
+		if r.URL.Path != "/metrics" {
+			done = a.metrics.Begin()
+		}
 
 		next.ServeHTTP(recorder, r)
 
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
-			return
-		}
 		route := ""
 		if routeContext := chi.RouteContext(r.Context()); routeContext != nil {
 			route = routeContext.RoutePattern()
@@ -60,6 +63,12 @@ func (a *App) requestLogger(next http.Handler) http.Handler {
 		status := recorder.status
 		if status == 0 {
 			status = http.StatusOK
+		}
+		if done != nil {
+			done(r.Method, route, status)
+		}
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
+			return
 		}
 		a.logger.Info("http request",
 			"request_id", requestID,

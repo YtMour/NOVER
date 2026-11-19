@@ -18,9 +18,11 @@ NOVER（知屿）是开源数字产品交付平台：**外部平台成交 + NOVE
 | `server/` | Go API、迁移与维护命令 | Go 1.24 + chi + pgx + PostgreSQL 17 |
 | `server/cmd/api` | API 入口，启动时自动执行迁移并引导默认账号 | |
 | `server/cmd/maintenance` | 数据保留 / 孤儿文件清理（默认 dry-run） | |
+| `server/cmd/migrate` | 迁移状态/应用 CLI（本地升级与 CI） | |
 | `scripts/qa/` | 业务冒烟 + `run-all.ps1` 汇总 | 跨平台 PowerShell（5.1 / 7 / Linux） |
 | `scripts/verify.ps1`、`scripts/verify.sh` | 本地一键验证（与 CI 同源步骤） | |
-| `docs/` | 产品、架构、API、开发、运维文档 | |
+| `scripts/ops/` | 备份/恢复脚本（pg_dump + 私有卷 + manifest 校验） | |
+| `docs/` | 产品、架构、API、开发、运维、设计系统文档 | |
 | `.github/workflows/ci.yml` | 后端、前端 matrix、端到端冒烟 | |
 | `docker-compose.yml` | 本地与单机部署 | |
 
@@ -56,10 +58,11 @@ Windows PowerShell 5.1 可直接运行本仓库脚本，不需要 pwsh 7：
 ### 业务冒烟（需 `.env` 与 `docker compose up -d --build`）
 
 ```powershell
-.\scripts\qa\run-all.ps1                     # 三套顺序执行，任一失败返回非零
-.\scripts\qa\version-entitlement-smoke.ps1   # 版本权益、草稿隐藏、下载额度
-.\scripts\qa\tenant-delivery-smoke.ps1       # 租户隔离、商户目录与交付
-.\scripts\qa\operator-capabilities-smoke.ps1 # 商品资料/更新策略/退款/成员/改密/会话/审计
+.\scripts\qa\run-all.ps1                          # 四套顺序执行，任一失败返回非零
+.\scripts\qa\version-entitlement-smoke.ps1        # 版本权益、草稿隐藏、下载额度
+.\scripts\qa\tenant-delivery-smoke.ps1            # 租户隔离、商户目录与交付
+.\scripts\qa\operator-capabilities-smoke.ps1      # 商品资料/更新策略/退款/成员/改密/会话/审计
+.\scripts\qa\identity-mfa-invitation-smoke.ps1    # 邀请设密/MFA/恢复码/密码重置
 ```
 
 脚本使用合成租户/商品并在结束时清理；`-KeepFixture` 保留夹具便于排查。
@@ -82,9 +85,33 @@ cd console; npm.cmd ci; npm.cmd run dev
 docker compose --profile ops run --rm maintenance          # dry-run：只统计
 docker compose --profile ops run --rm maintenance -apply   # 执行清理
 docker compose --profile ops run --rm maintenance -json    # 机器可读输出
+
+docker compose --profile ops run --rm migrate -status      # 只读迁移计划
+docker compose --profile ops run --rm migrate -apply       # 应用待执行迁移
 ```
 
 迁移位于 `server/internal/db/migrations/NNNN_snake_case.sql`，API 启动时按版本顺序自动应用并校验 checksum。
+
+### 本地升级 / 回滚
+
+```powershell
+.\scripts\ops\upgrade.ps1 -DryRun                 # 预检 + 打印升级计划
+.\scripts\ops\upgrade.ps1                         # 备份 → 构建 → 启动 → 就绪检查
+.\scripts\ops\upgrade.ps1 -Rollback               # 使用 :previous 镜像快速回滚
+```
+
+完整流程见 [docs/upgrade.md](docs/upgrade.md)。
+
+### 备份与恢复
+
+```powershell
+.\scripts\ops\backup.ps1 -DryRun                 # 打印计划命令，不执行
+.\scripts\ops\backup.ps1 -OutputDir D:\backups\nover
+.\scripts\ops\restore.ps1 -DatabaseDump ... -AssetsArchive ... -DryRun
+.\scripts\ops\restore.ps1 -DatabaseDump ... -AssetsArchive ... -Confirm   # 破坏性恢复
+```
+
+脚本会生成数据库 dump、私有卷归档与 manifest 校验和；详细说明见 [scripts/ops/README.md](scripts/ops/README.md)。
 
 ## 5. 关键不变量（改动前必读）
 
@@ -99,11 +126,13 @@ docker compose --profile ops run --rm maintenance -json    # 机器可读输出
 9. **退款即收权**：`REFUND` 将兑换码置 `REFUNDED`、关联权益置 `REVOKED`，原因写入审计；退款后交付/下载立即失效。
 10. **成员与审计权限**：仅 OWNER/ADMIN 拥有 `member.manage`/`audit.read`；不能修改自己或 OWNER；暂停成员会撤销其会话。
 11. **密码变更语义**：改密保留当前会话、撤销其他设备；`token_version` 递增，旧会话失效。
-12. **schema 变更只新增迁移**：不要修改已应用的迁移，checksum 不一致会阻止启动。
-13. **不提交**：`.env`、密钥、真实用户/订单数据、售卖文件（源码包、压缩包、安装包）。
-14. **前后台分离**：`web/` 不得引用 `console/` 源码或运营 API。
-15. **错误码是契约**：前端与冒烟脚本断言 `code`，不要无声修改语义。
-16. **PowerShell 脚本**：UTF-8 BOM + LF（Windows PowerShell 5.1 中文兼容）；JSON 请求体用 UTF-8 字节；multipart 上传用 curl，不要用 `Invoke-RestMethod -Form`。
+12. **MFA 语义**：TOTP secret 使用由 `OPERATOR_TOKEN_KEY` 派生的 AES-GCM 密钥加密；恢复码只存 SHA-256 哈希且一次性；启用 MFA 后登录必须走 challenge + 验证码，不能只凭密码创建会话。
+13. **一次性邀请/重置**：邀请与重置 token 只存哈希、一次性、有有效期；接受邀请后激活成员，接受重置后递增 `token_version` 并撤销该用户全部会话。系统不发送邮件，链接由运营者线下传递。
+14. **schema 变更只新增迁移**：不要修改已应用的迁移，checksum 不一致会阻止启动。
+15. **不提交**：`.env`、密钥、真实用户/订单数据、售卖文件（源码包、压缩包、安装包）。
+16. **前后台分离**：`web/` 不得引用 `console/` 源码或运营 API。
+17. **错误码是契约**：前端与冒烟脚本断言 `code`，不要无声修改语义。
+18. **PowerShell 脚本**：UTF-8 BOM + LF（Windows PowerShell 5.1 中文兼容）；JSON 请求体用 UTF-8 字节；multipart 上传用 curl，不要用 `Invoke-RestMethod -Form`。
 
 ## 6. 新增 API
 
@@ -140,6 +169,9 @@ docker compose --profile ops run --rm maintenance -json    # 机器可读输出
 
 - 提交前至少运行 `.\scripts\verify.ps1 -SkipE2E`（或 `./scripts/verify.sh --skip-e2e`）。
 - 后端改动必须 `go vet ./...` + `go test ./...` 通过；新逻辑补 table-driven 测试。
+- 涉及迁移、数据库查询或完整业务闭环时，运行真实数据库集成测试：
+  `TEST_DATABASE_URL=postgres://... TEST_STORAGE_DIR=<临时目录> go test -tags=integration ./...`
+  （需要可丢弃数据库；CI 使用独立 PostgreSQL service 运行）。
 - 前端改动必须让 `web/`、`console/` 都通过 `npm.cmd run build`（含 `tsc -b` 类型检查）。
 - 改动兑换、权益、交付、下载额度或租户隔离时，必须运行 `scripts/qa/run-all.ps1` 并确认 `pass: true`；`-SkipE2E` 不能替代。
 - CI 结构（`.github/workflows/ci.yml`）：hygiene（`git diff --check`）、backend、frontend matrix、smoke。
@@ -153,9 +185,11 @@ docker compose --profile ops run --rm maintenance -json    # 机器可读输出
 - [docs/api.md](docs/api.md)：HTTP 契约、错误码、分页与集成建议
 - [docs/development.md](docs/development.md)：环境、常用命令、迁移、排障
 - [docs/operations.md](docs/operations.md)：部署、备份恢复、维护清理、日志
+- [docs/upgrade.md](docs/upgrade.md)：本地升级、迁移状态、回滚与升级后验证
+- [docs/design-system.md](docs/design-system.md)：视觉设计系统与 UX/可访问性规范
 - [docs/admin-saas-design.md](docs/admin-saas-design.md)：控制台与 SaaS 设计
 - [docs/roadmap.md](docs/roadmap.md)：迭代路线
-- [docs/audit-split.md](docs/audit-split.md)、[docs/audit-2026-11-11.md](docs/audit-2026-11-11.md)、[docs/audit-2026-11-19.md](docs/audit-2026-11-19.md)、[docs/audit-2026-11-19-v0.3.0.md](docs/audit-2026-11-19-v0.3.0.md)：验收与审计证据
+- [docs/audit-split.md](docs/audit-split.md)、[docs/audit-2026-11-11.md](docs/audit-2026-11-11.md)、[docs/audit-2026-11-19.md](docs/audit-2026-11-19.md)、[docs/audit-2026-11-19-v0.3.0.md](docs/audit-2026-11-19-v0.3.0.md)、[docs/audit-2026-11-19-v0.4.0.md](docs/audit-2026-11-19-v0.4.0.md)、[docs/audit-2026-11-19-v0.5.0.md](docs/audit-2026-11-19-v0.5.0.md)：验收与审计证据
 - [CHANGELOG.md](CHANGELOG.md)：版本变更记录
 
 ## 12. 工作方式

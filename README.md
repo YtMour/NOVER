@@ -69,12 +69,16 @@ ReactBits 是可复制组件参考集合，不是本项目依赖的运行时包�
 - [运营控制台与 SaaS 设计](docs/admin-saas-design.md)：前后台拆分、账号准入、RBAC、租户隔离和部署配置
 - [开发指南](docs/development.md)：本地开发、迁移、冒烟与排障（DX）
 - [运维手册](docs/operations.md)：部署检查、维护清理、备份恢复与排障
+- [升级与回滚](docs/upgrade.md)：本地升级、迁移状态、回滚与升级后验证
+- [设计系统](docs/design-system.md)：颜色/字体/组件/动效/可访问性规范
 - [API 接口说明](docs/api.md)：接口契约、错误码、分页与退避约定
 - [智能体指南](AGENTS.md)：仓库地图、不变量、常用命令与改动流程（AX）
 - [前后台拆分验收](docs/audit-split.md)：本地容器、浏览器流程、响应式和构建边界证据
 - [2026-11-11 阶段审计](docs/audit-2026-11-11.md)：租户交付、文件管理、页面测试与剩余风险
 - [2026-11-19 版本审计](docs/audit-2026-11-19.md)：v0.2.0 工程收口、UX/DX/AX 改造与验证证据
 - [2026-11-19 v0.3.0 审计](docs/audit-2026-11-19-v0.3.0.md)：商品资料、退款、成员、账户安全与审计
+- [2026-11-19 v0.4.0 审计](docs/audit-2026-11-19-v0.4.0.md)：MFA、邀请、重置、指标与体验打磨
+- [2026-11-19 v0.5.0 审计](docs/audit-2026-11-19-v0.5.0.md)：本地升级、迁移状态、集成测试与验证体验
 - [CHANGELOG](CHANGELOG.md)：版本变更记录
 
 ## 当前状态
@@ -84,6 +88,10 @@ MVP 已包含 Go API、两个独立 React 前端、PostgreSQL schema 和 Docker 
 2026-11-19 发布 v0.2.0：数据库结构改为版本化迁移（自动识别历史安装、校验和防篡改），新增维护清理命令与 Compose `ops` profile、结构化请求日志、`/api/v1/meta` 构建信息、429 `Retry-After`、活动分页、交付下载额度字段；双端补齐可访问性基线与深链、目录搜索、额度与有效期展示；新增 CI、跨平台 QA 脚本、一键验证脚本、开发/运维/API 文档与智能体指南。生产化缺口（RLS、MFA、对象存储、备份恢复、指标告警）仍按路线图推进。
 
 2026-11-19 发布 v0.3.0：商品资料升级为结构化资料（亮点、授权、技术要求、支持期、更新策略）并新增独立公开详情接口；兑换码签发时快照更新策略，交付与下载按 `LIFETIME / TILL_DATE / CURRENT_ONLY` 过滤版本；新增手工退款（权益立即失效并留痕）、成员创建与角色/状态管理、账户改密与会话管理、租户审计日志页与 API。控制台新增“账户与安全”“审计日志”视图，用户端详情页展示结构化资料与更新范围。
+
+2026-11-19 发布 v0.4.0：运营账号新增可选 TOTP 两步验证与 10 个一次性恢复码；成员入职改为一次性邀请链接设密，管理员可为成员生成一次性密码重置链接（均线下传递，token 只存哈希）；新增 `/metrics` Prometheus 指标、备份/恢复脚本与设计系统文档。前端完成视觉与体验打磨：商品图光箱、骨架屏、Toast、空状态、控制台两步登录/MFA 设置/邀请接受页，以及移动端与可访问性改进。
+
+2026-11-19 发布 v0.5.0：新增 `nover-migrate` 迁移 CLI（status/apply/json）与 Compose `ops` migrate 服务；控制台“部署设置 → 系统状态”展示版本、迁移 applied/pending/latest、数据库延迟与存储可写性；新增本地升级/回滚脚本 `scripts/ops/upgrade.ps1`（自动备份、镜像记录、就绪等待与摘要）；Compose 为 web/console 增加健康检查与 API 就绪依赖；验证脚本支持 JSON 报告与真实数据库集成测试，CI 新增 PostgreSQL 集成测试 job；用户端/控制台显示版本号并补齐升级体验。
 
 ## 本地运行
 
@@ -134,7 +142,16 @@ npm run dev
 在仓库根目录一键验证（单元测试、静态检查、双端构建，默认再跑两套业务冒烟）：
 
 ```powershell
+# 完整验证（单元测试、静态检查、双端构建、四套业务冒烟）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
+
+# 输出 JSON 报告
+.\scripts\verify.ps1 -ReportPath .\tmp\verify-report.json
+
+# 额外运行真实数据库集成测试（需要可丢弃的 PostgreSQL）
+$env:TEST_DATABASE_URL = "postgres://nover:<password>@127.0.0.1:5433/nover_integration_test?sslmode=disable"
+$env:TEST_STORAGE_DIR = "D:\NOVER\tmp\integration-storage"
+.\scripts\verify.ps1 -SkipE2E -Integration
 ```
 
 冒烟脚本要求 API 已在 `127.0.0.1:48080` 运行；也可以单独执行：
@@ -144,9 +161,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 .\scripts\qa\version-entitlement-smoke.ps1
 .\scripts\qa\tenant-delivery-smoke.ps1
 .\scripts\qa\operator-capabilities-smoke.ps1
+.\scripts\qa\identity-mfa-invitation-smoke.ps1
 ```
 
-前两套分别验证版本发布幂等、文件保护、兑换与下载额度，以及待审只读、审核激活、商户目录、跨租户不可见；第三套验证商品结构化资料与更新策略、退款、成员管理、改密/会话与审计日志。三套结束后均清理测试记录与文件，`-KeepFixture` 可保留夹具。CI 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
+前三套分别验证版本发布幂等、文件保护、兑换与下载额度，待审只读、审核激活、商户目录、跨租户不可见，以及商品结构化资料与更新策略、退款、成员管理、改密/会话与审计日志；第四套验证一次性邀请设密、TOTP MFA 启用/两步登录/恢复码与管理员重置密码。四套结束后均清理测试记录与文件，`-KeepFixture` 可保留夹具。CI 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
 ## API 入口
 
@@ -154,13 +172,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 | --- | --- | --- |
 | `GET` | `/healthz` | 进程存活检查 |
 | `GET` | `/readyz` | 数据库就绪检查 |
-| `GET` | `/api/v1/meta` | 公开版本、提交与环境信息 |
+| `GET` | `/api/v1/meta` | 公开版本、提交、环境与 schema_version |
+| `GET` | `/metrics` | Prometheus 文本指标（请求/运行时长/构建信息） |
 | `GET` | `/api/v1/products` | 首页和商品详情页使用的公开商品目录 |
 | `GET` | `/api/v1/products/{productID}` | 公开商品详情（结构化资料、图片、更新策略） |
 | `GET` | `/api/v1/spaces/{slug}/products` | 指定商户的公开商品目录；图片路由同样带空间前缀 |
 | `GET` | `/api/v1/spaces/{slug}/products/{productID}` | 指定商户空间的商品详情 |
 | `POST` | `/api/v1/join-applications` | 提交组织与运营账号申请 |
-| `POST` | `/api/v1/cp-7f3c/login` | 运营账号密码登录，签发短期会话 |
+| `POST` | `/api/v1/invitations/accept` | 一次性邀请/密码重置 token 设置密码 |
+| `POST` | `/api/v1/cp-7f3c/login` | 运营账号密码登录，签发短期会话（启用 MFA 时返回两步挑战） |
+| `POST` | `/api/v1/cp-7f3c/login/mfa` | 完成 TOTP/恢复码两步验证 |
+| `GET/POST` | `/api/v1/cp-7f3c/mfa[...]` | 查看、设置、启用或关闭 TOTP 两步验证 |
 | `GET/POST` | `/api/v1/cp-7f3c/session[...]` | 读取当前身份或撤销当前会话 |
 | `POST` | `/api/v1/cp-7f3c/password` | 修改当前账号密码（保留当前会话） |
 | `GET` | `/api/v1/cp-7f3c/sessions` | 查看当前账号有效会话 |
@@ -168,11 +190,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 | `POST` | `/api/v1/cp-7f3c/sessions/revoke-others` | 撤销除当前设备外的会话 |
 | `GET` | `/api/v1/cp-7f3c/audit-events` | 租户审计日志（筛选 + 分页） |
 | `GET` | `/api/v1/cp-7f3c/members` | 查看当前租户成员与角色 |
-| `POST/PATCH` | `/api/v1/cp-7f3c/members[...]` | 创建成员、调整角色/状态（OWNER/ADMIN） |
+| `GET/POST/PATCH` | `/api/v1/cp-7f3c/members[...]` | 查看成员、邀请/创建成员、调整角色/状态 |
+| `POST` | `/api/v1/cp-7f3c/members/invitations[...]` | 创建/查看/撤销一次性成员邀请 |
+| `POST` | `/api/v1/cp-7f3c/members/{id}/password-reset` | 为成员生成一次性密码重置链接 |
 | `GET` | `/api/v1/cp-7f3c/products` | 运营控制台商品列表 |
 | `GET` | `/api/v1/cp-7f3c/activity` | 最近兑换、权益和下载活动，支持 `limit`/`offset` 分页 |
 | `GET/POST` | `/api/v1/cp-7f3c/applications[...]` | 查看与审核加入申请 |
 | `GET/PUT` | `/api/v1/cp-7f3c/settings` | 保存部署拓扑和路由规划 |
+| `GET` | `/api/v1/cp-7f3c/system/status` | 版本、迁移状态、数据库延迟与存储健康 |
 | `POST` | `/api/v1/cp-7f3c/products` | 创建商品 |
 | `PUT` | `/api/v1/cp-7f3c/products/{id}` | 保存商品名称、简介与 Markdown 详细介绍 |
 | `POST` | `/api/v1/cp-7f3c/products/{id}/status` | 发布、下架为草稿或归档商品 |
@@ -212,7 +237,20 @@ docker compose --profile ops run --rm maintenance
 docker compose --profile ops run --rm maintenance -apply -json
 ```
 
-运维细节（备份恢复、cron、故障排查）见[运维手册](docs/operations.md)，接口契约见[API 说明](docs/api.md)。
+运维细节（备份恢复、cron、故障排查）见[运维手册](docs/operations.md)；本地升级、迁移状态与回滚见[升级指南](docs/upgrade.md)：
+
+```powershell
+# 迁移状态 / 手工应用
+docker compose --profile ops run --rm migrate -status
+docker compose --profile ops run --rm migrate -apply
+
+# 一键升级（预检 + 备份 + 构建 + 就绪检查）与回滚
+.\scripts\ops\upgrade.ps1 -DryRun
+.\scripts\ops\upgrade.ps1
+.\scripts\ops\upgrade.ps1 -Rollback
+```
+
+接口契约见[API 说明](docs/api.md)。
 
 ## 视觉方向
 

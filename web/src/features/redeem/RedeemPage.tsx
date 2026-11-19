@@ -2,13 +2,17 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { ArrowDown, ArrowRight, ArrowUpRight, Download, KeyRound, Search, ShieldCheck, ShoppingBag, X } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { loadPublicProducts, redeemCode } from '../../lib/api'
+import { ApiError, loadPublicProducts, redeemCode } from '../../lib/api'
 import { getProductVisual } from '../../lib/productVisuals'
 import { StatusMessage } from '../../components/StatusMessage'
+import { CatalogSkeleton } from '../../components/Skeleton'
+import { EmptyState } from '../../components/EmptyState'
+import { useToast } from '../../components/Toast'
 
 export function RedeemPage() {
   const [code, setCode] = useState('')
   const navigate = useNavigate()
+  const { notify } = useToast()
   const { spaceSlug } = useParams()
   const products = useQuery({ queryKey: ['public-products', spaceSlug], queryFn: () => loadPublicProducts(spaceSlug) })
   const productCount = products.data ? String(products.data.items.length).padStart(2, '0') : '—'
@@ -22,7 +26,14 @@ export function RedeemPage() {
     mutationFn: redeemCode,
     onSuccess: ({ access_token }) => {
       sessionStorage.setItem('nover.deliveryToken', access_token)
+      notify({ kind: 'success', message: '兑换成功，正在打开你的交付空间。' })
       navigate('/delivery')
+    },
+    onError: (error: Error) => {
+      // 网络异常是瞬时状态：走 toast（role=alert），表单内不再重复同一条 StatusMessage。
+      if (error instanceof ApiError && error.code === 'network_error') {
+        notify({ kind: 'error', title: '网络连接异常', message: error.message })
+      }
     },
   })
 
@@ -52,7 +63,7 @@ export function RedeemPage() {
           <div><div className="eyebrow"><span className="eyebrow-line" /> SELECTED COLLECTION</div><h2>正在交付的产品</h2></div>
           <span className="section-side-note">{productCount} PRODUCTS · 精选数字工具与创作资源</span>
         </div>
-        {products.isError ? <div className="catalog-error"><StatusMessage kind="info">产品目录暂时无法加载，兑换入口仍可正常使用。</StatusMessage><button type="button" className="button button-secondary" onClick={() => void products.refetch()} disabled={products.isFetching}>{products.isFetching ? '正在重新连接…' : '重新加载目录'} <ArrowRight size={15} aria-hidden="true" /></button></div> : products.isLoading ? <div className="catalog-loading">正在整理产品目录…</div> : catalogItems.length ? (
+        {products.isError ? <div className="catalog-error"><StatusMessage kind="info">产品目录暂时无法加载，兑换入口仍可正常使用。</StatusMessage><button type="button" className="button button-secondary" onClick={() => void products.refetch()} disabled={products.isFetching}>{products.isFetching ? '正在重新连接…' : '重新加载目录'} <ArrowRight size={15} aria-hidden="true" /></button></div> : products.isLoading ? <CatalogSkeleton /> : catalogItems.length ? (
           <>
             <div className="catalog-toolbar">
               <div className="catalog-search">
@@ -72,9 +83,9 @@ export function RedeemPage() {
               <div className="product-grid">
                 {filteredProducts.map((product, index) => <ProductCard key={product.id} product={product} index={index} spaceSlug={spaceSlug} />)}
               </div>
-            ) : <div className="catalog-empty">没有找到与「{search.trim()}」匹配的产品，试试其他关键词。</div>}
+            ) : <EmptyState title="没有找到匹配的产品" description={`没有与「${search.trim()}」匹配的产品，试试其他关键词。`} />}
           </>
-        ) : <div className="catalog-empty">当前没有公开商品，稍后再来看看。</div>}
+        ) : <EmptyState title="目录暂时为空" description="当前没有公开商品，稍后再来看看。" />}
       </section>
 
       <section className="delivery-flow" aria-labelledby="delivery-flow-title">
@@ -102,7 +113,7 @@ export function RedeemPage() {
             <label htmlFor="redeem-code">兑换码</label>
             <div className="input-wrap"><input id="redeem-code" name="code" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="NVR-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XX" autoCapitalize="characters" autoComplete="off" spellCheck={false} required /></div>
             <div className="input-hint">兑换码包含 26 个字符，请留意字母与数字。</div>
-            {mutation.isError && <StatusMessage>{mutation.error.message}</StatusMessage>}
+            {mutation.isError && !(mutation.error instanceof ApiError && mutation.error.code === 'network_error') && <StatusMessage>{mutation.error.message}</StatusMessage>}
             <button className="button button-primary redeem-submit" type="submit" disabled={mutation.isPending}><span>{mutation.isPending ? '正在核验' : '继续领取'}</span><ArrowRight size={17} /></button>
           </form>
           <div className="panel-footnote"><span className="tiny-status-dot" /><span>你的文件由独立交付空间安全托管</span></div>

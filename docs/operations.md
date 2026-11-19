@@ -36,7 +36,8 @@ Compose 默认只绑定回环地址，公网部署必须在前面加 TLS 反向�
 - [ ] 通过 TLS 反向代理暴露 `web`、`console`、`api`，API 不直接暴露公网。
 - [ ] 控制台域名加访问限制（IP allowlist / SSO）。
 - [ ] 创建 `private-assets` 与 `postgres-data` 卷的备份策略。
-- [ ] 验证 `/healthz`、`/readyz`、`/api/v1/meta` 返回正常。
+- [ ] 验证 `/healthz`、`/readyz`、`/metrics`、`/api/v1/meta` 返回正常。
+- [ ] 登录控制台后在“部署设置 → 系统状态”确认版本、迁移 applied/pending/latest、数据库延迟与存储可写。
 - [ ] 运行一次业务冒烟（见开发指南），随后清理夹具。
 - [ ] 记录当前版本、迁移状态与备份恢复步骤。
 
@@ -49,7 +50,14 @@ API 启动时自动执行 `server/internal/db/migrations/`：
 - 校验和不匹配会拒绝启动（防止就地修改旧迁移）；
 - 迁移在单事务内执行，失败整体回滚。
 
-发布顺序建议：先备份数据库 → 部署新镜像 → 观察启动日志 `database migrations applied` → 验证 `/readyz`。
+也可以手工查看/应用迁移：
+
+```bash
+docker compose --profile ops run --rm migrate -status
+docker compose --profile ops run --rm migrate -apply
+```
+
+发布顺序建议：先备份数据库 → 部署新镜像 → 观察启动日志 `database migrations applied` → 验证 `/readyz` 与 `/api/v1/cp-7f3c/system/status`。完整升级/回滚流程见[升级指南](upgrade.md)。
 
 ## 5. 维护清理
 
@@ -83,7 +91,7 @@ docker compose --profile ops run --rm maintenance -json
 
 ## 6. 备份与恢复
 
-当前尚未提供自动化备份工具，最小可靠流程如下。
+当前尚未提供自动化备份工具，最小可靠流程如下；仓库已提供 `scripts/ops/backup.ps1` 与 `restore.ps1`（见 [scripts/ops/README.md](../scripts/ops/README.md)）作为可重复执行的版本，仍建议定期做恢复演练。
 
 ### 备份
 
@@ -110,17 +118,16 @@ docker compose up -d
 
 > 注意：卷名以 `docker volume ls` 实际输出为准（通常是 `<项目名>_private-assets`）。
 
-## 7. 日志与可观测性
-
-- API 输出结构化 JSON 日志（`log/slog`），每请求一行：`request_id`、`method`、`path`、`route`、`status`、`bytes`、`duration_ms`、`ip`。
+## 7. 日志与可观测性- API 输出结构化 JSON 日志（`log/slog`），每请求一行：`request_id`、`method`、`path`、`route`、`status`、`bytes`、`duration_ms`、`ip`。
 - 每个响应带 `X-Request-Id`；错误响应同时带统一错误码。
 - `/healthz` 为进程存活，`/readyz` 为数据库就绪，`/api/v1/meta` 返回版本/提交/环境。
-- 健康检查请求不写访问日志，避免噪声。
-- 当前没有指标、追踪和告警接入；生产化前应补 Prometheus/OpenTelemetry 或托管日志告警。
+- `GET /metrics` 提供 Prometheus 文本指标（请求计数、in-flight、运行时长、构建信息）；公网部署应在反向代理限制访问。
+- 健康检查请求不写访问日志，`/metrics` 抓取不计入指标自身。
+- 当前没有告警与追踪接入；生产化前应补 Prometheus/OpenTelemetry 或托管日志告警。
 
 ## 8. 限流与容量
 
-- 登录、兑换、上传、票据、加入申请均按客户端 IP 做进程内限流（登录 30 次/分钟，兑换 12 次/分钟，上传 30 次/分钟，票据 60 次/分钟，加入申请 5 次/小时），超限返回 `429` 与 `Retry-After`。
+- 登录、兑换、上传、票据、加入申请均按客户端 IP 做进程内限流（登录 30 次/分钟、MFA 验证 20 次/分钟、邀请/重置创建 30 次/小时、邀请接受 10 次/小时，兑换 12 次/分钟，上传 30 次/分钟，票据 60 次/分钟，加入申请 5 次/小时），超限返回 `429` 与 `Retry-After`。
 - 进程内计数在重启后清零，多实例之间不共享；高流量或多副本前需接入 Redis 或网关限流。
 - 上传默认上限 500MB，反向代理需同步放宽请求体与超时。
 - 单实例目标规模：小型团队与数百订单量级；更大规模需评估对象存储、队列与只读副本。
@@ -141,6 +148,6 @@ docker compose up -d
 
 - 无自动化备份/恢复与租户级导出；
 - 无对象存储/S3 适配与上传病毒扫描；
-- 无限流共享、指标、追踪与告警；
+- 无共享限流、告警、追踪与租户级指标；
 - 无生产级 RLS 与多租户配额；
 - 下载票据在 5 分钟内可重复使用，额度按签发票据计数。
