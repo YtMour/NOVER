@@ -2,6 +2,55 @@
 
 本文件记录 NOVER 对外可见的版本变化。版本号与 git tag（建议 `v0.2.0`）对齐。
 
+## [0.3.0] - 2026-11-19
+
+主题：可运营闭环（商品资料 v2、退款售后、成员与账户安全、租户审计）。
+
+### 商品与交付
+
+- 商品新增结构化资料：`highlights`（≤8 条）、`license_terms`、`requirements`、`support_period`。
+- 新增商品级更新策略 `LIFETIME / TILL_DATE / CURRENT_ONLY` 与截止时间；签发兑换码时快照、兑换时复制到权益，交付列表与下载票据按策略过滤后续版本（起始版本始终可见）。
+- 新增独立公开详情接口 `GET /api/v1/products/{id}` 与空间版 `GET /api/v1/spaces/{slug}/products/{id}`。
+- 用户端详情页展示亮点、授权、技术要求、支持期与更新策略；交付页展示权益更新范围与策略文案。
+
+### 运营与售后
+
+- 新增手工退款：兑换码标记 `REFUNDED`、权益立即 `REVOKED`，退款原因写入审计；重复退款返回 409。
+- 新增成员管理：OWNER/ADMIN 可创建成员（ADMIN/EDITOR/FULFILLMENT/ANALYST）、调整角色与状态；暂停成员会撤销其会话；不能修改自己或 OWNER。
+- 新增账户安全：修改密码（保留当前会话、撤销其他设备）、会话列表、撤销单个会话、撤销其他设备。
+- 新增租户审计日志 API 与控制台视图：支持 action/resource_type 筛选、分页加载更多、元数据展开。
+- 新增 `member.manage` 与 `audit.read` 权限点。
+
+### 控制台与用户端
+
+- 控制台新增“账户与安全”“审计日志”视图与 hash 深链；商品编辑新增资料与更新策略区块；兑换记录支持退款；成员视图支持创建、改角色、暂停/启用。
+- 用户端商品详情页接入独立详情接口，新增结构化资料区块；交付页展示更新策略与权益范围。
+
+### 工程与文档
+
+- 新增迁移 `0003_product_profile_and_accounts.sql`（商品资料列、码/权益策略快照列、审计查询索引、演示资料）。
+- 登录限流调整为 30 次/分钟/IP；新增冒烟脚本 `operator-capabilities-smoke.ps1` 并纳入 `run-all.ps1`；PowerShell JSON 请求体统一 UTF-8，修复中文在 Windows PowerShell 5.1 下的乱码。
+- 更新 API、架构、产品定义、路线图、README、AGENTS、开发/运维文档与 `docs/audit-2026-11-19-v0.3.0.md`。
+
+### 验证
+
+- `go vet ./...`、`go test ./...` 通过（45 个测试函数）。
+- `web/`、`console/` 构建通过；`scripts/verify.ps1` 全量通过。
+- 三套业务冒烟全部 `pass: true`：版本权益、租户交付、运营能力（资料/退款/成员/改密/会话/审计）。
+- 迁移 `0003` 在历史库成功应用；回归冒烟未破坏既有兑换/交付/额度行为。
+
+### 升级说明
+
+- 升级无需手工迁移：启动自动应用 `0003`。历史权益 `update_policy` 为 NULL 时按 `LIFETIME` 处理。
+- 新增字段均向后兼容；旧前端缺少字段时隐藏新 UI。
+- 新增错误码：`code_not_refundable`、`invalid_member`、`member_exists`、`member_not_found`、`member_self_forbidden`、`member_owner_protected`、`invalid_password`、`invalid_current_password`、`session_not_found`、`invalid_audit_filter`。
+
+### 未包含
+
+- MFA/Passkey、邀请邮件、密码重置、RLS、跨租户负向矩阵全覆盖。
+- 外部平台退款自动同步、S3/扫描、备份恢复自动化、指标告警。
+- 商品目录卡片消费新资料字段、多语言、ReactBits 组件。
+
 ## [0.2.0] - 2026-11-19
 
 主题：工程收口、运营可用性、开发者与智能体体验。

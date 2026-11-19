@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDownToLine, Clipboard, FileArchive, FileCode2, FileText, GitBranch, LogOut, ShieldCheck, Sparkles } from 'lucide-react'
+import { ArrowDownToLine, Clipboard, FileArchive, FileCode2, FileText, GitBranch, LogOut, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
 import anime from 'animejs'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { createDownloadTicket, loadDelivery } from '../../lib/api'
 import { StatusMessage } from '../../components/StatusMessage'
+import { updatePolicyLabel } from '../../lib/productProfile'
 import type { Asset } from '../../types'
 
 const DAY_MS = 86_400_000
@@ -81,6 +82,15 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
   const remainingDownloads = maxDownloads === null ? null : Math.max(0, maxDownloads - downloadsUsed)
   const downloadsExhausted = remainingDownloads !== null && remainingDownloads <= 0
   const access = formatAccess(data.valid_until)
+  // 更新策略为 v0.3.0 新增字段：旧版交付接口不返回时直接隐藏该行。
+  const deliveryUpdatePolicy = data.update_policy ? updatePolicyLabel(data.update_policy, data.update_until) : ''
+  const deliveryScopeText = data.base_version
+    ? data.update_policy === 'CURRENT_ONLY'
+      ? '此权益包含购买起始版本的文件，不含后续更新。'
+      : data.update_policy === 'TILL_DATE'
+        ? '有效访问期内，可获取起始版本及更新截止日期前发布的版本。'
+        : '有效访问期内，可获取起始版本及之后发布的更新文件。'
+    : '此权益兼容通用文件与所有已发布版本。'
   const pendingAssetId = downloadMutation.isPending ? downloadMutation.variables : undefined
 
   return (
@@ -109,7 +119,8 @@ export function DeliveryPage({ token, onLogout }: { token: string; onLogout: () 
         <div className="delivery-version-copy">
           <span className="section-kicker">VERSION ENTITLEMENT</span>
           <strong>{data.base_version ? `购买起始版本 ${data.base_version}` : '历史通用权益'}</strong>
-          <p>{data.base_version ? '有效访问期内，可获取起始版本及之后发布的更新文件。' : '此权益兼容通用文件与所有已发布版本。'}</p>
+          <p>{deliveryScopeText}</p>
+          {deliveryUpdatePolicy && <span className="delivery-update-policy"><RefreshCw size={12} aria-hidden="true" />{deliveryUpdatePolicy}</span>}
         </div>
         <div className="delivery-version-latest"><span>当前最新</span><strong>{latestVersion || '通用交付'}</strong>{hasUpdate && <small>有可用更新</small>}</div>
       </section>

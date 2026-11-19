@@ -37,7 +37,7 @@ type operatorIdentity struct {
 type operatorContextKey struct{}
 
 func (a *App) operatorLogin(w http.ResponseWriter, r *http.Request) {
-	if allowed, retry := a.allowRequest(r, "operator-login", 8, time.Minute); !allowed {
+	if allowed, retry := a.allowRequest(r, "operator-login", 30, time.Minute); !allowed {
 		setRetryAfter(w, retry)
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many login attempts. Please wait and try again.")
 		return
@@ -133,22 +133,32 @@ func (a *App) listPublicProducts(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) listSpaceProducts(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "spaceSlug")
-	var tenantID, tenantName string
-	err := a.db.QueryRow(r.Context(), `SELECT id, name FROM tenants WHERE slug=$1 AND status='ACTIVE'`, slug).Scan(&tenantID, &tenantName)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "space_not_found", "This space is not available.")
-		return
-	}
+	tenantID, tenantName, ok, err := a.resolveActiveTenantBySlug(r.Context(), slug)
 	if err != nil {
 		a.logError(r, "load public space failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
 		return
 	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "space_not_found", "This space is not available.")
+		return
+	}
 	a.writePublicProducts(w, r, tenantID, slug, tenantName)
 }
 
+func (a *App) resolveActiveTenantBySlug(ctx context.Context, slug string) (tenantID, tenantName string, ok bool, err error) {
+	err = a.db.QueryRow(ctx, `SELECT id, name FROM tenants WHERE slug=$1 AND status='ACTIVE'`, slug).Scan(&tenantID, &tenantName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return tenantID, tenantName, true, nil
+}
+
 func (a *App) writePublicProducts(w http.ResponseWriter, r *http.Request, tenantID, slug, tenantName string) {
-	rows, err := a.db.Query(r.Context(), `SELECT p.id, ''::text, ''::text, ''::text, ''::text, p.name, p.description, p.detail, p.status, `+productCurrentReleaseVersionSQL+`, `+productCurrentReleaseChangelogSQL+`, `+productAssetCountSQL+`, `+productImageJSON+` FROM products p WHERE p.tenant_id=$1 AND p.status='ACTIVE' ORDER BY p.created_at DESC`, tenantID)
+	rows, err := a.db.Query(r.Context(), `SELECT p.id, ''::text, ''::text, ''::text, ''::text, `+productListFieldsSQL+` FROM products p WHERE p.tenant_id=$1 AND p.status='ACTIVE' ORDER BY p.created_at DESC`, tenantID)
 	if err != nil {
 		a.logError(r, "list public products failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Products could not be loaded.")
@@ -162,15 +172,50 @@ func (a *App) writePublicProducts(w http.ResponseWriter, r *http.Request, tenant
 		return
 	}
 	if slug != "" {
-		for i := range items {
-			items[i].TenantName = tenantName
-			items[i].Detail = strings.ReplaceAll(items[i].Detail, "/api/v1/products/"+items[i].ID+"/images/", "/api/v1/spaces/"+slug+"/products/"+items[i].ID+"/images/")
-			for j := range items[i].Images {
-				items[i].Images[j].URL = "/api/v1/spaces/" + slug + "/products/" + items[i].ID + "/images/" + items[i].Images[j].ID
-			}
+		for index := range items {
+			items[index].TenantName = tenantName
+			rewriteProductForSpace(&items[index], slug)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "space_name": tenantName})
+}
+
+func (a *App) publicProduct(w http.ResponseWriter, r *http.Request) {
+	a.writePublicProduct(w, r, defaultTenantID, "")
+}
+
+func (a *App) publicSpaceProduct(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "spaceSlug")
+	tenantID, tenantName, ok, err := a.resolveActiveTenantBySlug(r.Context(), slug)
+	if err != nil {
+		a.logError(r, "load public space failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "This product could not be loaded.")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "space_not_found", "This space is not available.")
+		return
+	}
+	_ = tenantName
+	a.writePublicProduct(w, r, tenantID, slug)
+}
+
+func (a *App) writePublicProduct(w http.ResponseWriter, r *http.Request, tenantID, slug string) {
+	item := product{}
+	err := scanProduct(a.db.QueryRow(r.Context(), `SELECT p.id, ''::text, ''::text, ''::text, ''::text, `+productListFieldsSQL+` FROM products p WHERE p.tenant_id=$1 AND p.id=$2 AND p.status='ACTIVE'`, tenantID, productID(r)), &item)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "product_not_found", "This product is not available.")
+		return
+	}
+	if err != nil {
+		a.logError(r, "load public product failed", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "This product could not be loaded.")
+		return
+	}
+	if slug != "" {
+		rewriteProductForSpace(&item, slug)
+	}
+	writeJSON(w, http.StatusOK, item)
 }
 
 func (a *App) requireOperator(next http.Handler) http.Handler {
@@ -203,6 +248,7 @@ func (a *App) requireOperator(next http.Handler) http.Handler {
 			return
 		}
 		identity.Permissions = permissionNames(identity)
+		a.touchOperatorSession(r, identity.SessionID)
 		ctx := context.WithValue(r.Context(), operatorContextKey{}, identity)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

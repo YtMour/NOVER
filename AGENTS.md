@@ -56,9 +56,10 @@ Windows PowerShell 5.1 可直接运行本仓库脚本，不需要 pwsh 7：
 ### 业务冒烟（需 `.env` 与 `docker compose up -d --build`）
 
 ```powershell
-.\scripts\qa\run-all.ps1                     # 两套顺序执行，任一失败返回非零
+.\scripts\qa\run-all.ps1                     # 三套顺序执行，任一失败返回非零
 .\scripts\qa\version-entitlement-smoke.ps1   # 版本权益、草稿隐藏、下载额度
 .\scripts\qa\tenant-delivery-smoke.ps1       # 租户隔离、商户目录与交付
+.\scripts\qa\operator-capabilities-smoke.ps1 # 商品资料/更新策略/退款/成员/改密/会话/审计
 ```
 
 脚本使用合成租户/商品并在结束时清理；`-KeepFixture` 保留夹具便于排查。
@@ -94,11 +95,15 @@ docker compose --profile ops run --rm maintenance -json    # 机器可读输出
 5. **发布门槛**：商品转 `ACTIVE` 前至少一个交付文件；版本发布要求商品 `ACTIVE` 且该版本至少一个文件。
 6. **权益范围**：通用文件 + 权益起始版本及其之后所有已发布版本。
 7. **下载额度**：票据 5 分钟有效；每次签发使 `downloads_used` +1，交付接口返回 `max_downloads` 与 `downloads_used`。
-8. **schema 变更只新增迁移**：不要修改已应用的迁移，checksum 不一致会阻止启动。
-9. **不提交**：`.env`、密钥、真实用户/订单数据、售卖文件（源码包、压缩包、安装包）。
-10. **前后台分离**：`web/` 不得引用 `console/` 源码或运营 API。
-11. **错误码是契约**：前端与冒烟脚本断言 `code`，不要无声修改语义。
-12. **PowerShell 脚本**：UTF-8 BOM + LF（Windows PowerShell 5.1 中文兼容）；multipart 上传用 curl，不要用 `Invoke-RestMethod -Form`。
+8. **更新策略快照**：商品更新策略在兑换码签发时快照到 `redeem_codes`，兑换时复制到权益；交付/票据按 `LIFETIME / TILL_DATE / CURRENT_ONLY` 过滤后续版本，起始版本始终可见。
+9. **退款即收权**：`REFUND` 将兑换码置 `REFUNDED`、关联权益置 `REVOKED`，原因写入审计；退款后交付/下载立即失效。
+10. **成员与审计权限**：仅 OWNER/ADMIN 拥有 `member.manage`/`audit.read`；不能修改自己或 OWNER；暂停成员会撤销其会话。
+11. **密码变更语义**：改密保留当前会话、撤销其他设备；`token_version` 递增，旧会话失效。
+12. **schema 变更只新增迁移**：不要修改已应用的迁移，checksum 不一致会阻止启动。
+13. **不提交**：`.env`、密钥、真实用户/订单数据、售卖文件（源码包、压缩包、安装包）。
+14. **前后台分离**：`web/` 不得引用 `console/` 源码或运营 API。
+15. **错误码是契约**：前端与冒烟脚本断言 `code`，不要无声修改语义。
+16. **PowerShell 脚本**：UTF-8 BOM + LF（Windows PowerShell 5.1 中文兼容）；JSON 请求体用 UTF-8 字节；multipart 上传用 curl，不要用 `Invoke-RestMethod -Form`。
 
 ## 6. 新增 API
 
@@ -150,7 +155,7 @@ docker compose --profile ops run --rm maintenance -json    # 机器可读输出
 - [docs/operations.md](docs/operations.md)：部署、备份恢复、维护清理、日志
 - [docs/admin-saas-design.md](docs/admin-saas-design.md)：控制台与 SaaS 设计
 - [docs/roadmap.md](docs/roadmap.md)：迭代路线
-- [docs/audit-split.md](docs/audit-split.md)、[docs/audit-2026-11-11.md](docs/audit-2026-11-11.md)、[docs/audit-2026-11-19.md](docs/audit-2026-11-19.md)：验收与审计证据
+- [docs/audit-split.md](docs/audit-split.md)、[docs/audit-2026-11-11.md](docs/audit-2026-11-11.md)、[docs/audit-2026-11-19.md](docs/audit-2026-11-19.md)、[docs/audit-2026-11-19-v0.3.0.md](docs/audit-2026-11-19-v0.3.0.md)：验收与审计证据
 - [CHANGELOG.md](CHANGELOG.md)：版本变更记录
 
 ## 12. 工作方式

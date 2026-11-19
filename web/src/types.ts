@@ -1,3 +1,5 @@
+export type UpdatePolicy = 'LIFETIME' | 'TILL_DATE' | 'CURRENT_ONLY'
+
 export type Product = {
   id: string
   tenant_id?: string
@@ -12,6 +14,13 @@ export type Product = {
   current_release_changelog?: string
   asset_count?: number
   images?: ProductImage[]
+  // 商品资料 v2：旧版 API 不返回这些字段，前端按可选处理并回退默认值。
+  highlights?: string[]
+  license_terms?: string
+  requirements?: string
+  support_period?: string
+  update_policy?: UpdatePolicy
+  update_until?: string | null
 }
 
 export type ProductImage = {
@@ -40,6 +49,8 @@ export type Delivery = {
   downloads_used?: number
   base_release_id?: string
   base_version?: string
+  update_policy?: UpdatePolicy
+  update_until?: string | null
   product: Product
   assets: Asset[]
 }

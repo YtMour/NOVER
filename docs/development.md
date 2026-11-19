@@ -20,7 +20,7 @@ Windows 注意：
 ## 2. 一键验证
 
 ```powershell
-# 单元测试 + 静态检查 + 双端构建（默认再跑两套业务冒烟）
+# 单元测试 + 静态检查 + 双端构建（默认再跑三套业务冒烟）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 
 # 只做快速检查，跳过需要运行中容器的冒烟
@@ -111,15 +111,16 @@ docker compose --profile ops run --rm maintenance -json
 ## 6. 业务冒烟
 
 ```powershell
-# 两套一起跑（需要 API 已在 127.0.0.1:48080 运行）
+# 三套一起跑（需要 API 已在 127.0.0.1:48080 运行）
 .\scripts\qa\run-all.ps1
 
 # 单独运行
 .\scripts\qa\version-entitlement-smoke.ps1
 .\scripts\qa\tenant-delivery-smoke.ps1
+.\scripts\qa\operator-capabilities-smoke.ps1
 ```
 
-脚本会创建临时租户/商品并在结束时清理；`-KeepFixture` 可保留夹具用于手动排查。
+第三套覆盖商品结构化资料与更新策略、退款、成员管理、改密/会话与审计日志。脚本会创建临时租户/商品/成员并在结束时清理；`-KeepFixture` 可保留夹具用于手动排查。
 
 ## 7. 代码结构
 

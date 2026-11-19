@@ -13,6 +13,8 @@ const (
 	permissionCodeManage        permission = "code.manage"
 	permissionActivityRead      permission = "activity.read"
 	permissionMemberRead        permission = "member.read"
+	permissionMemberManage      permission = "member.manage"
+	permissionAuditRead         permission = "audit.read"
 	permissionApplicationRead   permission = "application.read"
 	permissionApplicationReview permission = "application.review"
 	permissionSettingsRead      permission = "settings.read"
@@ -20,8 +22,8 @@ const (
 )
 
 var tenantRolePermissions = map[string][]permission{
-	"OWNER":       {permissionProductRead, permissionProductWrite, permissionProductPublish, permissionFulfillmentWrite, permissionCodeIssue, permissionCodeManage, permissionActivityRead, permissionMemberRead},
-	"ADMIN":       {permissionProductRead, permissionProductWrite, permissionProductPublish, permissionFulfillmentWrite, permissionCodeIssue, permissionCodeManage, permissionActivityRead, permissionMemberRead},
+	"OWNER":       {permissionProductRead, permissionProductWrite, permissionProductPublish, permissionFulfillmentWrite, permissionCodeIssue, permissionCodeManage, permissionActivityRead, permissionMemberRead, permissionMemberManage, permissionAuditRead},
+	"ADMIN":       {permissionProductRead, permissionProductWrite, permissionProductPublish, permissionFulfillmentWrite, permissionCodeIssue, permissionCodeManage, permissionActivityRead, permissionMemberRead, permissionMemberManage, permissionAuditRead},
 	"EDITOR":      {permissionProductRead, permissionProductWrite},
 	"FULFILLMENT": {permissionProductRead, permissionFulfillmentWrite, permissionCodeIssue, permissionCodeManage, permissionActivityRead},
 	"ANALYST":     {permissionProductRead, permissionActivityRead},
@@ -53,8 +55,8 @@ func permissionNames(identity operatorIdentity) []string {
 	set := permissionSet(identity)
 	ordered := []permission{
 		permissionProductRead, permissionProductWrite, permissionProductPublish, permissionFulfillmentWrite,
-		permissionCodeIssue, permissionCodeManage, permissionActivityRead, permissionMemberRead,
-		permissionApplicationRead, permissionApplicationReview, permissionSettingsRead, permissionSettingsManage,
+		permissionCodeIssue, permissionCodeManage, permissionActivityRead, permissionMemberRead, permissionMemberManage,
+		permissionAuditRead, permissionApplicationRead, permissionApplicationReview, permissionSettingsRead, permissionSettingsManage,
 	}
 	result := make([]string, 0, len(set))
 	for _, item := range ordered {

@@ -3781,3 +3781,533 @@ p {
         scroll-margin-top: 68px;
     }
 }
+
+/* v0.3.0 console: structured product profile, refund, member administration,
+   account security and the read-only audit trail. New surfaces lean on the
+   existing warm-white/ink/fog tokens so both themes stay readable. */
+.editor-profile-block {
+    display: grid;
+    gap: 2px;
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px dashed var(--line);
+}
+
+.editor-profile-heading {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+
+.editor-profile-heading h3 {
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 640;
+}
+
+.editor-profile-heading > span:last-child {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.editor-profile-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
+    gap: 12px;
+    margin-top: 14px;
+}
+
+.editor-profile-grid label,
+.editor-profile-block > label {
+    display: grid;
+    gap: 6px;
+    margin-top: 14px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 620;
+}
+
+.editor-profile-grid label > input,
+.editor-profile-grid label > select {
+    margin-top: 0;
+}
+
+.field-note--warn {
+    color: #9a6a24;
+    font-weight: 600;
+}
+
+.activity-row {
+    grid-template-columns: 132px minmax(140px, 1.3fr) minmax(130px, 1fr) 110px minmax(62px, auto);
+}
+
+.code-activity-section .activity-row {
+    grid-template-columns: 120px minmax(120px, 1.2fr) minmax(120px, 1fr) 90px minmax(62px, auto);
+}
+
+.activity-refund-button:hover {
+    color: #8a5a2a;
+    background: var(--amber-soft);
+    border-color: #e2caa1;
+}
+
+.permission-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 15px;
+}
+
+.permission-notice h2 {
+    margin: 5px 0 0;
+    font-size: 18px;
+    font-weight: 630;
+}
+
+.permission-notice .status-message {
+    margin: 12px 0 0;
+}
+
+.members-admin-view,
+.account-view,
+.audit-view {
+    min-width: 0;
+}
+
+.member-create-section {
+    margin-bottom: 16px;
+}
+
+.member-create-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.member-create-grid label {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 620;
+}
+
+.member-create-grid input,
+.member-create-grid select {
+    width: 100%;
+    color: var(--ink);
+    background: var(--surface-muted);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 10px 12px;
+    font-size: 12px;
+}
+
+.member-create-grid input:focus,
+.member-create-grid select:focus {
+    outline: none;
+    border-color: var(--blue-action);
+    box-shadow: 0 0 0 3px #a7b9cb35;
+}
+
+.member-create-form .button {
+    margin-top: 4px;
+}
+
+.members-admin-view .member-list-head,
+.members-admin-view .member-row {
+    grid-template-columns: minmax(200px, 1.3fr) minmax(120px, .6fr) minmax(150px, .8fr) 80px 130px;
+}
+
+.member-role-cell {
+    min-width: 0;
+}
+
+.member-role-select {
+    width: 100%;
+    max-width: 132px;
+    min-height: 32px;
+    color: var(--ink);
+    background: var(--surface-muted);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 0 8px;
+    font-size: 11px;
+}
+
+.member-row-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+}
+
+.member-locked-label {
+    color: var(--muted);
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.account-grid {
+    display: grid;
+    grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr);
+    align-items: start;
+    gap: 16px;
+}
+
+.account-card .stack-form.compact-form {
+    margin-top: 2px;
+}
+
+.account-refresh {
+    margin-left: auto;
+}
+
+.session-list {
+    display: grid;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--white);
+    overflow: hidden;
+}
+
+.session-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 13px 15px;
+    border-top: 1px solid var(--line);
+}
+
+.session-row:first-child {
+    border-top: 0;
+}
+
+.session-device {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    color: var(--blue-action);
+    background: var(--surface-muted);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+.session-meta {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.session-meta strong {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 630;
+}
+
+.session-meta span {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.55;
+}
+
+.session-current-badge {
+    color: var(--green);
+    background: var(--green-soft);
+    border: 1px solid #d4e6da;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 620;
+}
+
+.session-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.session-locked-label {
+    color: var(--muted);
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.session-footer {
+    margin-top: 14px;
+}
+
+.button-small {
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 11px;
+}
+
+.audit-filter-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 15px 16px;
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+
+.audit-filter-bar label {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 620;
+}
+
+.audit-filter-bar input {
+    width: 100%;
+    color: var(--ink);
+    background: var(--surface-muted);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 10px 12px;
+    font-size: 12px;
+}
+
+.audit-filter-bar input:focus {
+    outline: none;
+    border-color: var(--blue-action);
+    box-shadow: 0 0 0 3px #a7b9cb35;
+}
+
+.audit-filter-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.audit-table {
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.audit-table-head,
+.audit-row {
+    display: grid;
+    grid-template-columns: 150px minmax(110px, .6fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(170px, 1.2fr);
+    gap: 12px;
+    padding: 0 16px;
+}
+
+.audit-table-head {
+    align-items: center;
+    min-height: 38px;
+    color: var(--muted);
+    background: var(--surface-muted);
+    font-size: 10px;
+}
+
+.audit-row {
+    align-items: start;
+    padding-top: 13px;
+    padding-bottom: 13px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.audit-time,
+.audit-actor {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.audit-action {
+    justify-self: start;
+    width: fit-content;
+    color: var(--ink);
+    background: var(--surface-muted);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+}
+
+.audit-resource {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.audit-resource strong {
+    color: var(--ink);
+    font-size: 11px;
+    font-weight: 620;
+}
+
+.audit-resource small {
+    color: var(--muted);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.audit-metadata {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.audit-metadata pre {
+    margin: 0;
+    max-height: 200px;
+    overflow: auto;
+    color: var(--ink);
+    background: var(--surface-muted);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 9px 10px;
+    font-size: 10px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.audit-muted {
+    color: var(--muted);
+}
+
+.audit-empty {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 36px 14px;
+    color: var(--muted);
+    text-align: center;
+    font-size: 11px;
+}
+
+.audit-empty svg {
+    color: var(--blue-action);
+}
+
+.audit-empty strong {
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 630;
+}
+
+.audit-load-more {
+    display: flex;
+    margin: 14px auto 0;
+}
+
+.audit-end-note {
+    color: var(--muted);
+    text-align: center;
+    margin-top: 14px;
+    font-size: 11px;
+}
+
+[data-theme=dark] .stack-form label,
+[data-theme=dark] .member-create-grid label,
+[data-theme=dark] .editor-profile-heading > span:last-child,
+[data-theme=dark] .field-note--warn {
+    color: #b9c2c5;
+}
+
+[data-theme=dark] .field-note--warn {
+    color: #d7b273;
+}
+
+[data-theme=dark] .session-current-badge {
+    color: #9bc4a8;
+    background: #1b2c23;
+    border-color: #294034;
+}
+
+[data-theme=dark] .activity-refund-button:hover {
+    color: #e0bd7a;
+    background: #30291a;
+    border-color: #5a4a2a;
+}
+
+@media(max-width:1050px) {
+    .activity-row,
+    .code-activity-section .activity-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .members-admin-view .member-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .members-admin-view .member-row > .member-role-cell {
+        grid-area: 1/2;
+        justify-self: end;
+    }
+
+    .members-admin-view .member-row > .status-pill {
+        grid-area: 2/2;
+        justify-self: end;
+    }
+
+    .member-row-actions {
+        grid-area: 3/1/-1;
+        justify-content: flex-end;
+    }
+
+    .member-create-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .account-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .audit-filter-bar {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .audit-table-head {
+        display: none;
+    }
+
+    .audit-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+}
+
+@media(max-width:760px) {
+    .member-create-grid,
+    .editor-profile-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .session-row {
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: start;
+    }
+
+    .session-actions {
+        grid-column: 1/-1;
+        justify-content: flex-start;
+        padding-left: 46px;
+    }
+
+    .audit-filter-actions {
+        flex-wrap: wrap;
+    }
+}

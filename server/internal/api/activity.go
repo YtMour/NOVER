@@ -130,15 +130,24 @@ func (a *App) adminActivity(w http.ResponseWriter, r *http.Request) {
 func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Action string `json:"action"`
+		Reason string `json:"reason"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Choose a valid code action.")
 		return
 	}
 	input.Action = strings.ToUpper(strings.TrimSpace(input.Action))
-	if input.Action != "SUSPEND" && input.Action != "RESUME" && input.Action != "REVOKE" {
-		writeError(w, http.StatusBadRequest, "invalid_action", "Choose suspend, resume, or revoke.")
+	input.Reason = strings.TrimSpace(input.Reason)
+	if input.Action != "SUSPEND" && input.Action != "RESUME" && input.Action != "REVOKE" && input.Action != "REFUND" {
+		writeError(w, http.StatusBadRequest, "invalid_action", "Choose suspend, resume, revoke, or refund.")
 		return
+	}
+	if len([]rune(input.Reason)) > 300 {
+		writeError(w, http.StatusBadRequest, "invalid_reason", "Keep the refund reason under 300 characters.")
+		return
+	}
+	if input.Action != "REFUND" {
+		input.Reason = ""
 	}
 	tx, err := a.db.Begin(r.Context())
 	if err != nil {
@@ -159,6 +168,7 @@ func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 		return
 	}
+	previousStatus := status
 	var nextCodeStatus string
 	var nextEntitlementStatus string
 	switch input.Action {
@@ -186,6 +196,17 @@ func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		nextCodeStatus = "REVOKED"
+		nextEntitlementStatus = "REVOKED"
+	case "REFUND":
+		if status == "REFUNDED" {
+			writeError(w, http.StatusConflict, "code_not_refundable", "This code has already been refunded.")
+			return
+		}
+		if status == "REVOKED" || status == "EXPIRED" {
+			writeError(w, http.StatusConflict, "code_not_refundable", "This code can no longer be refunded.")
+			return
+		}
+		nextCodeStatus = "REFUNDED"
 		nextEntitlementStatus = "REVOKED"
 	}
 	if input.Action == "RESUME" && entitlementID != nil {
@@ -217,7 +238,7 @@ func (a *App) updateCodeAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,$4,'redeem_code',$5,jsonb_build_object('status',$6::text))`, eventID, tenantID, operatorActor(r), input.Action, chi.URLParam(r, "codeID"), nextCodeStatus); err != nil {
+	if _, err := tx.Exec(r.Context(), `INSERT INTO admin_events (id, tenant_id, actor, action, resource_type, resource_id, metadata_json) VALUES ($1,$2,$3,$4,'redeem_code',$5,jsonb_build_object('status',$6::text,'previous_status',$7::text,'reason',$8::text))`, eventID, tenantID, operatorActor(r), input.Action, chi.URLParam(r, "codeID"), nextCodeStatus, previousStatus, input.Reason); err != nil {
 		a.logError(r, "record code action failed", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "The code action could not be completed.")
 		return

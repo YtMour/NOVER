@@ -1,3 +1,5 @@
+export type ProductUpdatePolicy = 'LIFETIME' | 'TILL_DATE' | 'CURRENT_ONLY'
+
 export type Product = {
   id: string
   tenant_id?: string
@@ -12,6 +14,12 @@ export type Product = {
   current_release_changelog?: string
   asset_count?: number
   images?: ProductImage[]
+  highlights?: string[]
+  license_terms?: string
+  requirements?: string
+  support_period?: string
+  update_policy?: ProductUpdatePolicy
+  update_until?: string | null
 }
 
 export type ProductRelease = {
@@ -29,7 +37,14 @@ export type ProductRelease = {
   updated_at: string
 }
 
-export type ProductDraftInput = Pick<Product, 'name' | 'description' | 'detail'>
+export type ProductDraftInput = Pick<Product, 'name' | 'description' | 'detail'> & {
+  highlights: string[]
+  license_terms: string
+  requirements: string
+  support_period: string
+  update_policy: ProductUpdatePolicy
+  update_until: string | null
+}
 
 export type ProductImage = {
   id: string
@@ -80,6 +95,7 @@ export type OperatorSession = {
 export type OperatorLoginResponse = { access_token: string; expires_at: string; session: OperatorSession }
 
 export type TenantMember = {
+  membership_id: string
   user_id: string
   username: string
   display_name: string
@@ -89,6 +105,20 @@ export type TenantMember = {
   joined_at: string
   last_active_at: string | null
 }
+
+export type MemberCreateInput = {
+  username: string
+  display_name: string
+  password: string
+  role: Exclude<OperatorSession['role'], 'OWNER'>
+}
+
+export type MemberPatchInput = {
+  role?: Exclude<OperatorSession['role'], 'OWNER'>
+  status?: TenantMember['status']
+}
+
+export type CodeAction = 'SUSPEND' | 'RESUME' | 'REVOKE' | 'REFUND'
 export type AdminActivity = {
   code_id: string
   product_id: string
@@ -136,4 +166,43 @@ export type PlatformSettings = {
   operator_web_path: string
   operator_api_path: string
   updated_at: string
+}
+
+export type OperatorSessionInfo = {
+  id: string
+  tenant_name: string
+  created_at: string
+  last_seen_at: string
+  expires_at: string
+  current: boolean
+}
+
+export type OperatorSessionsResponse = {
+  current_session_id: string
+  items: OperatorSessionInfo[]
+}
+
+export type AuditEvent = {
+  id: string
+  actor: string
+  action: string
+  resource_type: string
+  resource_id: string
+  metadata: unknown
+  created_at: string
+}
+
+export type AuditEventList = {
+  items: AuditEvent[]
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+}
+
+export type AuditEventQuery = {
+  limit?: number
+  offset?: number
+  action?: string
+  resource_type?: string
 }

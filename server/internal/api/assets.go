@@ -351,7 +351,7 @@ func (a *App) createDownloadTicket(w http.ResponseWriter, r *http.Request) {
 		JOIN entitlements e ON e.id=$2 AND e.tenant_id=a.tenant_id AND e.product_id=a.product_id
 		LEFT JOIN product_releases base ON base.id=e.release_id AND base.tenant_id=e.tenant_id
 		LEFT JOIN product_releases ar ON ar.id=a.release_id AND ar.tenant_id=a.tenant_id
-		WHERE a.id=$1 AND (a.release_id IS NULL OR (ar.status='PUBLISHED' AND (e.release_id IS NULL OR ar.published_at>=base.published_at)))
+		WHERE a.id=$1 AND `+entitlementAssetVisibilitySQL+`
 	)`, assetID, entitlementID).Scan(&exists)
 	if err != nil {
 		a.logError(r, "check asset entitlement failed", err)

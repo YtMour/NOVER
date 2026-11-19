@@ -3445,3 +3445,156 @@ p {
         margin-left: 52px;
     }
 }
+
+/* v0.3.0 product profile v2: highlights, delivery/license, support, requirements and update policy. */
+.product-highlights-block {
+    margin-top: 21px;
+}
+
+.product-highlights-title {
+    color: #848b91;
+    letter-spacing: 1.25px;
+    text-transform: uppercase;
+    margin: 0 0 9px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.product-highlights {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+}
+
+.product-highlights li {
+    color: #40566a;
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 5px 11px;
+    font-size: 11px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.product-profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 13px;
+    margin: 0;
+    display: grid;
+}
+
+.product-profile-item {
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    margin: 0;
+    padding: 17px 18px;
+}
+
+.product-profile-item dt {
+    color: #34434b;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    font-size: 12px;
+    font-weight: 640;
+    display: flex;
+}
+
+.product-profile-item dt svg {
+    color: var(--blue-action);
+    flex: none;
+}
+
+.product-profile-item dd {
+    color: #737c82;
+    margin: 9px 0 0;
+    font-size: 11px;
+    line-height: 1.8;
+}
+
+.product-profile-item dd p {
+    margin: 0;
+}
+
+.product-profile-text {
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+}
+
+.product-profile-update {
+    color: #3d5f4e;
+    background: var(--green-soft);
+    border: 1px solid #d9e9df;
+    border-radius: 999px;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    font-size: 11px;
+    font-weight: 620;
+    line-height: 1.5;
+    display: inline-flex;
+}
+
+.delivery-update-policy {
+    color: #4d7259;
+    background: var(--green-soft);
+    border: 1px solid #d9e9df;
+    border-radius: 999px;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    margin-top: 9px;
+    padding: 4px 10px;
+    font-size: 10px;
+    font-weight: 620;
+    line-height: 1.5;
+    display: flex;
+}
+
+.delivery-update-policy svg {
+    flex: none;
+}
+
+[data-theme=dark] .product-highlights li {
+    color: #c3cfd3;
+    background: #1d2426;
+    border-color: #313b3e;
+}
+
+[data-theme=dark] .product-profile-item {
+    background: #1b2123;
+    border-color: #2d3538;
+}
+
+[data-theme=dark] .product-profile-item dt {
+    color: #dbe3e5;
+}
+
+[data-theme=dark] .product-profile-item dd {
+    color: #9aa6a9;
+}
+
+[data-theme=dark] .product-profile-update {
+    color: #9fc4ad;
+    background: #1b2c23;
+    border-color: #2f4a3a;
+}
+
+[data-theme=dark] .delivery-update-policy {
+    color: #9fc4ad;
+    background: #1b2c23;
+    border-color: #2f4a3a;
+}
+
+@media(max-width:760px) {
+    .product-profile-grid {
+        grid-template-columns: 1fr;
+        gap: 9px;
+    }
+}

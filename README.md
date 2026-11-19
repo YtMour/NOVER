@@ -74,6 +74,7 @@ ReactBits 是可复制组件参考集合，不是本项目依赖的运行时包�
 - [前后台拆分验收](docs/audit-split.md)：本地容器、浏览器流程、响应式和构建边界证据
 - [2026-11-11 阶段审计](docs/audit-2026-11-11.md)：租户交付、文件管理、页面测试与剩余风险
 - [2026-11-19 版本审计](docs/audit-2026-11-19.md)：v0.2.0 工程收口、UX/DX/AX 改造与验证证据
+- [2026-11-19 v0.3.0 审计](docs/audit-2026-11-19-v0.3.0.md)：商品资料、退款、成员、账户安全与审计
 - [CHANGELOG](CHANGELOG.md)：版本变更记录
 
 ## 当前状态
@@ -81,6 +82,8 @@ ReactBits 是可复制组件参考集合，不是本项目依赖的运行时包�
 MVP 已包含 Go API、两个独立 React 前端、PostgreSQL schema 和 Docker Compose。`web/` 只包含公开商品、兑换、交付与加入申请；`console/` 是独立的运营控制台构建，包含数据总览、商品创建、兑换码管理、成员申请、成员与权限和部署设置。两端使用不同端口、静态镜像、应用壳层、主题状态和 API 客户端。商品创建采用“内容与实时预览 → 效果图片 → 版本草稿 → 版本文件 → 商品/版本发布”的连续流程，详细介绍支持 Markdown，并可在保存草稿后直接粘贴剪贴板图片。交付文件绑定具体 SemVer 版本；兑换码绑定一个已发布起始版本，权益在有效期内可访问该版本及后续发布版本。买家交付页按版本分组文件并提示可用更新；已被兑换码引用的基础版本不能撤回。运营登录使用数据库密码哈希、服务端可撤销会话和后端权限点。公开申请会创建只读待审账号和独立租户，通过审核后激活 OWNER 商品权限；MFA、密码重置和更完整的 SaaS 隔离按 [SaaS 设计](docs/admin-saas-design.md) 分阶段实现。
 
 2026-11-19 发布 v0.2.0：数据库结构改为版本化迁移（自动识别历史安装、校验和防篡改），新增维护清理命令与 Compose `ops` profile、结构化请求日志、`/api/v1/meta` 构建信息、429 `Retry-After`、活动分页、交付下载额度字段；双端补齐可访问性基线与深链、目录搜索、额度与有效期展示；新增 CI、跨平台 QA 脚本、一键验证脚本、开发/运维/API 文档与智能体指南。生产化缺口（RLS、MFA、对象存储、备份恢复、指标告警）仍按路线图推进。
+
+2026-11-19 发布 v0.3.0：商品资料升级为结构化资料（亮点、授权、技术要求、支持期、更新策略）并新增独立公开详情接口；兑换码签发时快照更新策略，交付与下载按 `LIFETIME / TILL_DATE / CURRENT_ONLY` 过滤版本；新增手工退款（权益立即失效并留痕）、成员创建与角色/状态管理、账户改密与会话管理、租户审计日志页与 API。控制台新增“账户与安全”“审计日志”视图，用户端详情页展示结构化资料与更新范围。
 
 ## 本地运行
 
@@ -140,9 +143,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 .\scripts\qa\run-all.ps1
 .\scripts\qa\version-entitlement-smoke.ps1
 .\scripts\qa\tenant-delivery-smoke.ps1
+.\scripts\qa\operator-capabilities-smoke.ps1
 ```
 
-首个脚本验证版本发布幂等、文件列表、草稿文件删除、已发布文件保护、兑换、更新权益和下载额度；第二个脚本验证申请待审只读、审核激活、商户商品目录、跨租户不可见和商户兑换交付。两者结束后清理测试记录与文件，`-KeepFixture` 可保留夹具。CI 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
+前两套分别验证版本发布幂等、文件保护、兑换与下载额度，以及待审只读、审核激活、商户目录、跨租户不可见；第三套验证商品结构化资料与更新策略、退款、成员管理、改密/会话与审计日志。三套结束后均清理测试记录与文件，`-KeepFixture` 可保留夹具。CI 配置见 [.github/workflows/ci.yml](.github/workflows/ci.yml)。
 
 ## API 入口
 
@@ -152,11 +156,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 | `GET` | `/readyz` | 数据库就绪检查 |
 | `GET` | `/api/v1/meta` | 公开版本、提交与环境信息 |
 | `GET` | `/api/v1/products` | 首页和商品详情页使用的公开商品目录 |
+| `GET` | `/api/v1/products/{productID}` | 公开商品详情（结构化资料、图片、更新策略） |
 | `GET` | `/api/v1/spaces/{slug}/products` | 指定商户的公开商品目录；图片路由同样带空间前缀 |
+| `GET` | `/api/v1/spaces/{slug}/products/{productID}` | 指定商户空间的商品详情 |
 | `POST` | `/api/v1/join-applications` | 提交组织与运营账号申请 |
 | `POST` | `/api/v1/cp-7f3c/login` | 运营账号密码登录，签发短期会话 |
 | `GET/POST` | `/api/v1/cp-7f3c/session[...]` | 读取当前身份或撤销当前会话 |
+| `POST` | `/api/v1/cp-7f3c/password` | 修改当前账号密码（保留当前会话） |
+| `GET` | `/api/v1/cp-7f3c/sessions` | 查看当前账号有效会话 |
+| `POST` | `/api/v1/cp-7f3c/sessions/{id}/revoke` | 撤销指定会话 |
+| `POST` | `/api/v1/cp-7f3c/sessions/revoke-others` | 撤销除当前设备外的会话 |
+| `GET` | `/api/v1/cp-7f3c/audit-events` | 租户审计日志（筛选 + 分页） |
 | `GET` | `/api/v1/cp-7f3c/members` | 查看当前租户成员与角色 |
+| `POST/PATCH` | `/api/v1/cp-7f3c/members[...]` | 创建成员、调整角色/状态（OWNER/ADMIN） |
 | `GET` | `/api/v1/cp-7f3c/products` | 运营控制台商品列表 |
 | `GET` | `/api/v1/cp-7f3c/activity` | 最近兑换、权益和下载活动，支持 `limit`/`offset` 分页 |
 | `GET/POST` | `/api/v1/cp-7f3c/applications[...]` | 查看与审核加入申请 |
@@ -170,7 +182,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 | `POST` | `/api/v1/cp-7f3c/products/{id}/assets` | 上传并绑定版本草稿的单个交付文件，表单包含 `release_id` |
 | `GET/DELETE` | `/api/v1/cp-7f3c/products/{id}/assets[...]` | 查看文件清单；仅草稿版本文件可删除 |
 | `POST` | `/api/v1/cp-7f3c/products/{id}/codes` | 签发绑定当前商品与已发布起始版本的兑换码 |
-| `POST` | `/api/v1/cp-7f3c/codes/{id}/action` | 暂停、恢复或撤销兑换凭证 |
+| `POST` | `/api/v1/cp-7f3c/codes/{id}/action` | 暂停、恢复、撤销或退款兑换凭证 |
 | `POST` | `/api/v1/redeem` | 兑换并取得交付凭证 |
 | `GET` | `/api/v1/delivery` | 获取商品、文件清单与下载额度信息 |
 | `POST` | `/api/v1/assets/{id}/ticket` | 签发 5 分钟下载票据 |

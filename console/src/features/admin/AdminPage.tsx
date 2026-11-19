@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent } from 'react'
-import { Archive, Ban, BarChart3, Building2, Check, Copy, Eye, FileUp, GitBranch, ImagePlus, KeyRound, LayoutDashboard, LockKeyhole, PackagePlus, Pause, Plus, RefreshCw, RotateCcw, Save, Send, ServerCog, Settings2, ShieldCheck, TicketCheck, Trash2, UserCheck, UsersRound, X } from 'lucide-react'
+import { Archive, Ban, BarChart3, Building2, Check, Copy, Eye, FileUp, GitBranch, HandCoins, ImagePlus, KeyRound, LayoutDashboard, LockKeyhole, PackagePlus, Pause, Plus, RefreshCw, RotateCcw, Save, ScrollText, Send, ServerCog, Settings2, ShieldCheck, TicketCheck, Trash2, UserCheck, UserCog, UsersRound, X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createProduct, createProductRelease, deleteDraftAsset, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductAssets, loadProductImageBlob, loadProductImages, loadProductReleases, loadProducts, loadTenantMembers, operatorLogin, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductReleaseStatus, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
+import { createProduct, createProductRelease, deleteDraftAsset, deleteProductImage, issueCodes, loadActivity, loadJoinApplications, loadOperatorSession, loadPlatformSettings, loadProductAssets, loadProductImageBlob, loadProductImages, loadProductReleases, loadProducts, operatorLogin, reviewJoinApplication, revokeOperatorSession, savePlatformSettings, updateCodeAction, updateProduct, updateProductReleaseStatus, updateProductStatus, uploadAsset, uploadProductImage } from '../../lib/api'
 import { StatusMessage } from '../../components/StatusMessage'
 import { ProductDetailView } from '../redeem/ProductDetailView'
-import type { AdminActivity, AdminActivitySummary, JoinApplication, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductRelease, TenantMember } from '../../types'
+import type { AdminActivity, AdminActivitySummary, CodeAction, JoinApplication, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductRelease, ProductUpdatePolicy } from '../../types'
+import { AccountView } from './AccountView'
+import { AuditView } from './AuditView'
+import { MembersAdminView } from './MembersAdminView'
+import { applicationStatusLabel, productStatusLabel, roleLabel } from './labels'
+import { describeError } from '../../lib/errors'
 
-const ADMIN_VIEWS = ['overview', 'products', 'codes', 'applications', 'members', 'settings'] as const
+const ADMIN_VIEWS = ['overview', 'products', 'codes', 'applications', 'members', 'settings', 'account', 'audit'] as const
 type AdminView = (typeof ADMIN_VIEWS)[number]
 
 const ADMIN_VIEW_TITLES: Record<AdminView, string> = {
@@ -16,6 +21,8 @@ const ADMIN_VIEW_TITLES: Record<AdminView, string> = {
   applications: '成员申请',
   members: '成员与权限',
   settings: '部署设置',
+  account: '账户与安全',
+  audit: '审计日志',
 }
 
 const BASE_DOCUMENT_TITLE = '知屿 NOVER · 运营控制台'
@@ -183,6 +190,8 @@ export function AdminPage() {
         {hasPermission('member.read') && <button className={view === 'members' ? 'is-active' : ''} aria-current={view === 'members' ? 'page' : undefined} onClick={() => navigateView('members')}><ShieldCheck size={16} aria-hidden="true" />成员与权限</button>}
         <span className="admin-nav-label">系统</span>
         {hasPermission('settings.read') && <button className={view === 'settings' ? 'is-active' : ''} aria-current={view === 'settings' ? 'page' : undefined} onClick={() => navigateView('settings')}><Settings2 size={16} aria-hidden="true" />部署设置</button>}
+        {hasPermission('audit.read') && <button className={view === 'audit' ? 'is-active' : ''} aria-current={view === 'audit' ? 'page' : undefined} onClick={() => navigateView('audit')}><ScrollText size={16} aria-hidden="true" />审计日志</button>}
+        <button className={view === 'account' ? 'is-active' : ''} aria-current={view === 'account' ? 'page' : undefined} onClick={() => navigateView('account')}><UserCog size={16} aria-hidden="true" />账户与安全</button>
         <div className="admin-nav-context"><Building2 size={15} aria-hidden="true" /><div><strong>身份与 RBAC 已启用</strong><span>商品与交付按当前空间隔离</span></div></div>
       </nav>
 
@@ -252,13 +261,15 @@ export function AdminPage() {
         {activity.isError && <StatusMessage>{activity.error.message}</StatusMessage>}
         {activity.isLoading ? <div className="empty-state">正在读取记录…</div> : activity.data?.items.length ? (
           <div className="activity-list">
-            {activity.data.items.map((item) => <ActivityRow key={item.code_id} item={item} token={adminToken} onChanged={async () => { setNotice('兑换凭证状态已更新。'); setError(''); await reloadActivity() }} onError={handleError} />)}
+            {activity.data.items.map((item) => <ActivityRow key={item.code_id} item={item} token={adminToken} canManage={hasPermission('code.manage')} onChanged={async (message) => { setNotice(message); setError(''); await reloadActivity() }} onError={handleError} />)}
           </div>
         ) : <div className="empty-state">签发兑换码后，记录会显示在这里。</div>}
       </section></div>}
       {view === 'applications' && <ApplicationsView token={adminToken} canReview={hasPermission('application.review')} />}
-      {view === 'members' && <MembersView token={adminToken} session={session.data!} />}
+      {view === 'members' && (hasPermission('member.read') ? <MembersAdminView token={adminToken} session={session.data!} canManage={hasPermission('member.manage')} /> : <PermissionNotice title="成员与权限" description="当前角色没有成员读取权限（member.read）。请联系空间所有者或管理员分配权限后再查看。" />)}
       {view === 'settings' && <PlatformSettingsView token={adminToken} canManage={hasPermission('settings.manage')} />}
+      {view === 'account' && <AccountView token={adminToken} />}
+      {view === 'audit' && (hasPermission('audit.read') ? <AuditView token={adminToken} /> : <PermissionNotice title="审计日志" description="当前角色没有审计日志权限（audit.read）。请联系空间所有者或管理员分配权限后再查看。" />)}
       {error && <StatusMessage>{error}</StatusMessage>}
       {notice && <StatusMessage kind="success">{notice}</StatusMessage>}
     </section>
@@ -297,40 +308,11 @@ function ApplicationRow({ item, busy, canReview, onAction }: { item: JoinApplica
   </article>
 }
 
-function MembersView({ token, session }: { token: string; session: OperatorSession }) {
-  const members = useQuery({ queryKey: ['tenant-members', token], queryFn: () => loadTenantMembers(token), retry: false })
-  const capabilityRows = [
-    ['OWNER', '空间、成员、商品、交付和兑换码的全部租户权限'],
-    ['ADMIN', '日常运营与成员管理，不承担平台级配置职责'],
-    ['EDITOR', '编辑商品内容与效果图，不直接发布或签发兑换码'],
-    ['FULFILLMENT', '上传交付文件、签发和管理兑换凭证'],
-    ['ANALYST', '只读查看商品与交付汇总'],
-  ]
-  return <section className="members-view">
-    <div className="overview-heading"><div><span className="section-kicker">TENANT ACCESS</span><h2>成员与权限</h2></div><span>{members.isLoading ? '正在同步成员' : `${members.data?.items.length ?? 0} 位成员`}</span></div>
-    <div className="member-security-banner"><ShieldCheck size={19} /><div><strong>权限由后端会话强制校验</strong><span>当前账号：{session.username} · {platformRoleLabel(session.platform_role)}。隐藏按钮只优化界面，API 仍会独立检查每个权限点。</span></div></div>
-    {members.isError && <StatusMessage>{members.error.message}</StatusMessage>}
-    <div className="members-layout">
-      <div className="member-list-panel">
-        <div className="member-list-head"><span>成员</span><span>角色</span><span>最近会话</span><span>状态</span></div>
-        {members.isLoading ? <div className="empty-state">正在读取成员…</div> : members.data?.items.map((member) => <MemberRow key={member.user_id} member={member} />)}
-      </div>
-      <aside className="role-capability-panel">
-        <span className="section-kicker">ROLE MATRIX</span><h3>租户角色边界</h3>
-        <div className="role-capability-list">{capabilityRows.map(([role, description]) => <div key={role}><strong>{roleLabel(role as OperatorSession['role'])}</strong><span>{description}</span></div>)}</div>
-        <p>平台角色与租户角色相互独立。申请审核和部署设置属于平台权限，不随租户管理员角色自动获得。</p>
-      </aside>
-    </div>
+function PermissionNotice({ title, description }: { title: string; description: string }) {
+  return <section className="admin-section permission-notice">
+    <div className="tool-icon tool-icon--amber"><ShieldCheck size={18} /></div>
+    <div><span className="section-kicker">PERMISSION REQUIRED</span><h2>{title}</h2><StatusMessage kind="info">{description}</StatusMessage></div>
   </section>
-}
-
-function MemberRow({ member }: { member: TenantMember }) {
-  return <article className="member-row">
-    <div className="member-identity"><span className="application-avatar">{member.display_name.slice(0, 1).toUpperCase()}</span><div><strong>{member.display_name}</strong><span>@{member.username} · {platformRoleLabel(member.platform_role)}</span></div></div>
-    <span className="role-badge">{roleLabel(member.role)}</span>
-    <span className="member-last-active">{member.last_active_at ? `最近会话 ${new Date(member.last_active_at).toLocaleString('zh-CN')}` : '尚无会话'}</span>
-    <span className={`status-pill member-status--${member.status.toLowerCase()}`}>{member.status === 'ACTIVE' ? '正常' : '已停用'}</span>
-  </article>
 }
 
 function PlatformSettingsView({ token, canManage }: { token: string; canManage: boolean }) {
@@ -402,16 +384,21 @@ function AdminOverview({ products, summary, loading }: { products: Product[]; su
   </section>
 }
 
-function ActivityRow({ item, token, onChanged, onError }: { item: AdminActivity; token: string; onChanged: () => void; onError: (error: Error) => void }) {
+function ActivityRow({ item, token, canManage, onChanged, onError }: { item: AdminActivity; token: string; canManage: boolean; onChanged: (message: string) => void; onError: (error: Error) => void }) {
   const mutation = useMutation({
-    mutationFn: (action: 'SUSPEND' | 'RESUME' | 'REVOKE') => updateCodeAction(token, item.code_id, action),
-    onSuccess: onChanged,
-    onError,
+    mutationFn: (input: { action: CodeAction; reason?: string }) => updateCodeAction(token, item.code_id, input.action, input.reason),
+    onSuccess: (_result, input) => onChanged(input.action === 'REFUND' ? `凭证尾号 ${item.code_suffix} 已完成退款，交付权益已失效。` : '兑换凭证状态已更新。'),
+    onError: (error) => onError(new Error(describeError(error))),
   })
   const suspended = item.code_status === 'SUSPENDED'
   const terminal = ['REVOKED', 'REFUNDED', 'EXPIRED'].includes(item.code_status)
   function revoke() {
-    if (window.confirm(`撤销凭证尾号 ${item.code_suffix}？已生成的交付权限也会立即失效。`)) mutation.mutate('REVOKE')
+    if (window.confirm(`撤销凭证尾号 ${item.code_suffix}？已生成的交付权限也会立即失效。`)) mutation.mutate({ action: 'REVOKE' })
+  }
+  function refund() {
+    const reason = window.prompt(`为凭证尾号 ${item.code_suffix} 办理退款？可填写退款原因（留空表示不填写）。`)
+    if (reason === null) return
+    mutation.mutate({ action: 'REFUND', reason: reason.trim() ? reason.trim().slice(0, 300) : undefined })
   }
   return (
     <article className="activity-row">
@@ -420,7 +407,8 @@ function ActivityRow({ item, token, onChanged, onError }: { item: AdminActivity;
       <div className="activity-dates"><span>{item.redeemed_at ? `已兑换 ${new Date(item.redeemed_at).toLocaleDateString('zh-CN')}` : `兑换截止 ${new Date(item.code_expires_at).toLocaleDateString('zh-CN')}`}</span><span>{item.entitlement_until ? `权益至 ${new Date(item.entitlement_until).toLocaleDateString('zh-CN')}` : '尚未建立权益'}</span></div>
       <div className="activity-downloads"><strong>{item.downloads_issued}</strong><span>已签发下载票据</span><small>{item.download_events} 次文件请求</small></div>
       <div className="activity-actions">
-        {!terminal && <button className="icon-button icon-button--small" title={suspended ? '恢复兑换/交付' : '暂停兑换/交付'} aria-label={suspended ? '恢复兑换/交付' : '暂停兑换/交付'} disabled={mutation.isPending} onClick={() => mutation.mutate(suspended ? 'RESUME' : 'SUSPEND')}>{suspended ? <RotateCcw size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />}</button>}
+        {canManage && !terminal && <button className="icon-button icon-button--small activity-refund-button" title="退款并失效交付权益" aria-label="退款" disabled={mutation.isPending} onClick={refund}><HandCoins size={15} aria-hidden="true" /></button>}
+        {!terminal && <button className="icon-button icon-button--small" title={suspended ? '恢复兑换/交付' : '暂停兑换/交付'} aria-label={suspended ? '恢复兑换/交付' : '暂停兑换/交付'} disabled={mutation.isPending} onClick={() => mutation.mutate({ action: suspended ? 'RESUME' : 'SUSPEND' })}>{suspended ? <RotateCcw size={15} aria-hidden="true" /> : <Pause size={15} aria-hidden="true" />}</button>}
         {!terminal && <button className="icon-button icon-button--small icon-button--danger" title="撤销兑换凭证" aria-label="撤销兑换凭证" disabled={mutation.isPending} onClick={revoke}><Ban size={15} aria-hidden="true" /></button>}
       </div>
     </article>
@@ -432,15 +420,82 @@ function statusLabel(status: string) {
   return labels[status] ?? status
 }
 
+type ProductProfileForm = {
+  name: string
+  description: string
+  detail: string
+  highlights: string
+  licenseTerms: string
+  requirements: string
+  supportPeriod: string
+  updatePolicy: ProductUpdatePolicy
+  updateUntil: string
+}
+
+const UPDATE_POLICY_LABELS: Record<ProductUpdatePolicy, string> = {
+  LIFETIME: '有效期内免费更新',
+  TILL_DATE: '更新至指定日期',
+  CURRENT_ONLY: '仅当前版本',
+}
+
+const UPDATE_POLICY_HINTS: Record<ProductUpdatePolicy, string> = {
+  LIFETIME: '买家在权益有效期内可持续获得该商品后续发布的新版本。',
+  TILL_DATE: '买家可更新至截止时间之前发布的版本；截止后仅保留已获得的版本。',
+  CURRENT_ONLY: '买家仅访问兑换时绑定的版本，不会自动获得后续更新。',
+}
+
+function padTwo(value: number) {
+  return String(value).padStart(2, '0')
+}
+
+function toLocalDateTimeInput(value?: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}-${padTwo(date.getMonth() + 1)}-${padTwo(date.getDate())}T${padTwo(date.getHours())}:${padTwo(date.getMinutes())}`
+}
+
+function toRFC3339(value: string) {
+  if (!value) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+function splitHighlights(value: string) {
+  return value.split('\n').map((line) => line.trim()).filter(Boolean)
+}
+
+function productProfileForm(product?: Product): ProductProfileForm {
+  return {
+    name: product?.name ?? '',
+    description: product?.description ?? '',
+    detail: product?.detail ?? '',
+    highlights: (product?.highlights ?? []).join('\n'),
+    licenseTerms: product?.license_terms ?? '',
+    requirements: product?.requirements ?? '',
+    supportPeriod: product?.support_period ?? '',
+    updatePolicy: product?.update_policy ?? 'LIFETIME',
+    updateUntil: toLocalDateTimeInput(product?.update_until),
+  }
+}
+
 function ProductEditor({ token, product, isCreating, onSaved, onNotice, onError }: { token: string; product?: Product; isCreating: boolean; onSaved: (product: Product) => Promise<void>; onNotice: (message: string) => void; onError: (error: Error) => void }) {
   const queryClient = useQueryClient()
   const [name, setName] = useState(product?.name ?? '')
   const [description, setDescription] = useState(product?.description ?? '')
   const [detail, setDetail] = useState(product?.detail ?? '')
+  const [highlights, setHighlights] = useState(() => (product?.highlights ?? []).join('\n'))
+  const [licenseTerms, setLicenseTerms] = useState(product?.license_terms ?? '')
+  const [requirements, setRequirements] = useState(product?.requirements ?? '')
+  const [supportPeriod, setSupportPeriod] = useState(product?.support_period ?? '')
+  const [updatePolicy, setUpdatePolicy] = useState<ProductUpdatePolicy>(product?.update_policy ?? 'LIFETIME')
+  const [updateUntil, setUpdateUntil] = useState(() => toLocalDateTimeInput(product?.update_until))
+  const [profileError, setProfileError] = useState('')
   const [sessionImages, setSessionImages] = useState(product?.images ?? [])
-  const savedDraft = useMemo<ProductDraftInput>(() => ({ name: product?.name ?? '', description: product?.description ?? '', detail: product?.detail ?? '' }), [product])
-  const currentDraft = useMemo<ProductDraftInput>(() => ({ name, description, detail }), [name, description, detail])
-  const dirty = currentDraft.name !== savedDraft.name || currentDraft.description !== savedDraft.description || currentDraft.detail !== savedDraft.detail
+  const savedProfile = useMemo(() => productProfileForm(product), [product])
+  const currentProfile = useMemo<ProductProfileForm>(() => ({ name, description, detail, highlights, licenseTerms, requirements, supportPeriod, updatePolicy, updateUntil }), [name, description, detail, highlights, licenseTerms, requirements, supportPeriod, updatePolicy, updateUntil])
+  const dirty = (Object.keys(savedProfile) as Array<keyof ProductProfileForm>).some((key) => savedProfile[key] !== currentProfile[key])
+  const parsedHighlights = useMemo(() => splitHighlights(highlights), [highlights])
   const imageURLs = usePrivateProductImageURLs(token, product?.id ?? '', sessionImages)
   const pasteImageMutation = useMutation({
     mutationFn: (file: File) => uploadProductImage(token, product!.id, file, file.name.replace(/\.[^.]+$/, '') || '粘贴图片'),
@@ -455,22 +510,50 @@ function ProductEditor({ token, product, isCreating, onSaved, onNotice, onError 
   const productImageKey = product?.images?.map((image) => image.id).join(',') ?? ''
   useEffect(() => { setSessionImages(product?.images ?? []) }, [product?.id, productImageKey])
 
+  function buildDraft(): ProductDraftInput {
+    return {
+      name,
+      description,
+      detail,
+      highlights: splitHighlights(highlights),
+      license_terms: licenseTerms,
+      requirements,
+      support_period: supportPeriod,
+      update_policy: updatePolicy,
+      update_until: updatePolicy === 'TILL_DATE' ? toRFC3339(updateUntil) : null,
+    }
+  }
+
+  function validateProfile() {
+    const items = splitHighlights(highlights)
+    if (items.length > 8) return '商品亮点最多 8 条，请合并或删除多余条目。'
+    const longIndex = items.findIndex((item) => item.length > 120)
+    if (longIndex >= 0) return `第 ${longIndex + 1} 条亮点超过 120 字，请精简后保存。`
+    if (licenseTerms.trim().length > 2000) return '授权说明不能超过 2000 字。'
+    if (requirements.trim().length > 2000) return '技术要求不能超过 2000 字。'
+    if (supportPeriod.trim().length > 120) return '支持期不能超过 120 字。'
+    if (updatePolicy === 'TILL_DATE' && !updateUntil) return '更新策略为“更新至指定日期”时，必须选择截止日期与时间。'
+    return ''
+  }
+
   const mutation = useMutation({
     mutationFn: async (targetStatus?: Product['status']) => {
+      const draft = buildDraft()
       let item = product
-        ? await updateProduct(token, product.id, currentDraft)
-        : await createProduct(token, currentDraft.name, currentDraft.description, currentDraft.detail, targetStatus === 'ACTIVE' ? 'ACTIVE' : 'DRAFT')
+        ? await updateProduct(token, product.id, draft)
+        : await createProduct(token, draft, targetStatus === 'ACTIVE' ? 'ACTIVE' : 'DRAFT')
       if (product && targetStatus && item.status !== targetStatus) item = await updateProductStatus(token, item.id, targetStatus)
       return item
     },
     onSuccess: async (item, targetStatus) => {
+      setProfileError('')
       await onSaved(item)
       if (targetStatus === 'ACTIVE') onNotice(`「${item.name}」已发布，公开目录现在可以看到。`)
       else if (targetStatus === 'DRAFT') onNotice(`「${item.name}」已转为草稿，公开目录已隐藏。`)
       else if (targetStatus === 'ARCHIVED') onNotice(`「${item.name}」已归档。`)
       else onNotice(isCreating ? `「${item.name}」已保存为草稿。` : '商品内容已保存。')
     },
-    onError,
+    onError: (error) => onError(new Error(describeError(error))),
   })
 
   const previewProduct: Product = {
@@ -481,9 +564,27 @@ function ProductEditor({ token, product, isCreating, onSaved, onNotice, onError 
     status: product?.status ?? 'DRAFT',
     asset_count: product?.asset_count ?? 0,
     images: sessionImages,
+    highlights: parsedHighlights,
+    license_terms: licenseTerms,
+    requirements,
+    support_period: supportPeriod,
+    update_policy: updatePolicy,
+    update_until: updatePolicy === 'TILL_DATE' ? toRFC3339(updateUntil) : null,
   }
   const canSave = name.trim().length > 0 && (isCreating || dirty)
   const busy = mutation.isPending
+
+  function submitProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canSave) return
+    const message = validateProfile()
+    if (message) {
+      setProfileError(message)
+      return
+    }
+    setProfileError('')
+    mutation.mutate(undefined)
+  }
 
   function archiveProduct() {
     if (product && window.confirm(`归档商品「${product.name}」？归档后将停止公开展示，并暂停新增素材与兑换码。`)) mutation.mutate('ARCHIVED')
@@ -507,7 +608,7 @@ function ProductEditor({ token, product, isCreating, onSaved, onNotice, onError 
 
   return (
     <div className="product-editor-layout">
-      <form className="product-editor-form stack-form" onSubmit={(event) => { event.preventDefault(); if (canSave) mutation.mutate(undefined) }}>
+      <form className="product-editor-form stack-form" onSubmit={submitProfile}>
         <div className="editor-state-row">
           <span className={`status-pill status-pill--${previewProduct.status.toLowerCase()}`}>{productStatusLabel(previewProduct.status)}</span>
           <span className={dirty || isCreating ? 'editor-save-state is-dirty' : 'editor-save-state'}>{dirty || isCreating ? '有未保存内容' : '内容已保存'}</span>
@@ -520,6 +621,24 @@ function ProductEditor({ token, product, isCreating, onSaved, onNotice, onError 
         <div className="editor-field-meta"><label htmlFor="editor-product-detail">详细介绍 · Markdown</label><span>{detail.length} / 6000</span></div>
         <textarea id="editor-product-detail" value={detail} onChange={(event) => setDetail(event.target.value)} onPaste={pasteDetailImage} maxLength={6000} rows={10} placeholder={'支持 Markdown：标题、列表、链接、代码块。\n\n保存草稿后，可直接把剪贴板图片粘贴到这里。'} />
         <p className="field-note">右侧实时渲染 Markdown。粘贴的图片会上传为当前商品效果图，并自动插入图片语法。</p>
+
+        <div className="editor-profile-block">
+          <div className="editor-profile-heading"><span className="section-kicker">STEP 01 · PROFILE</span><h3>资料与更新策略</h3><span>这些结构化资料用于公开详情页与售后说明；保存后立即生效。</span></div>
+          <div className="editor-field-meta"><label htmlFor="editor-product-highlights">商品亮点</label><span>{parsedHighlights.length} / 8 条 · 每行一条，单条 ≤ 120 字</span></div>
+          <textarea id="editor-product-highlights" value={highlights} onChange={(event) => setHighlights(event.target.value)} rows={4} placeholder={'每行一条，例如：\n包含完整源码与部署文档\n一年内免费更新'} />
+          {parsedHighlights.some((item) => item.length > 120) && <p className="field-note field-note--warn">有单条亮点超过 120 字，请精简后保存。</p>}
+          <div className="editor-field-meta"><label htmlFor="editor-product-license">授权说明</label><span>{licenseTerms.length} / 2000</span></div>
+          <textarea id="editor-product-license" value={licenseTerms} onChange={(event) => setLicenseTerms(event.target.value)} maxLength={2000} rows={3} placeholder="例如：允许个人与商业项目使用，不得转售原始文件。" />
+          <div className="editor-field-meta"><label htmlFor="editor-product-requirements">技术要求</label><span>{requirements.length} / 2000</span></div>
+          <textarea id="editor-product-requirements" value={requirements} onChange={(event) => setRequirements(event.target.value)} maxLength={2000} rows={3} placeholder="例如：Node.js 20+；支持现代浏览器。" />
+          <div className="editor-profile-grid">
+            <label htmlFor="editor-product-support">支持期<input id="editor-product-support" value={supportPeriod} onChange={(event) => setSupportPeriod(event.target.value)} maxLength={120} placeholder="例如：购买后 12 个月内" /></label>
+            <label htmlFor="editor-product-policy">更新策略<select id="editor-product-policy" value={updatePolicy} onChange={(event) => setUpdatePolicy(event.target.value as ProductUpdatePolicy)}>{(Object.keys(UPDATE_POLICY_LABELS) as ProductUpdatePolicy[]).map((policy) => <option value={policy} key={policy}>{UPDATE_POLICY_LABELS[policy]}</option>)}</select></label>
+          </div>
+          <p className="field-note">{UPDATE_POLICY_HINTS[updatePolicy]}</p>
+          {updatePolicy === 'TILL_DATE' && <label htmlFor="editor-product-update-until">更新截至日期与时间<input id="editor-product-update-until" type="datetime-local" value={updateUntil} onChange={(event) => setUpdateUntil(event.target.value)} required /></label>}
+        </div>
+        {profileError && <StatusMessage>{profileError}</StatusMessage>}
         <div className="editor-actions">
           <button className="button button-secondary" type="submit" disabled={!canSave || busy}><Save size={15} />{isCreating ? '保存草稿' : '保存修改'}</button>
           {!isCreating && product?.status === 'ACTIVE' && <button className="button button-secondary" type="button" disabled={busy} onClick={() => mutation.mutate('DRAFT')}><RotateCcw size={15} />下架为草稿</button>}
@@ -554,24 +673,6 @@ function usePrivateProductImageURLs(token: string, productId: string, images: Pr
     }
   }, [token, productId, imageKey]) // Image IDs are the stable cache identity for the saved gallery.
   return urls
-}
-
-function productStatusLabel(status: Product['status']) {
-  return { DRAFT: '草稿', ACTIVE: '已发布', ARCHIVED: '已归档' }[status]
-}
-
-function roleLabel(role?: OperatorSession['role']) {
-  if (!role) return '未分配角色'
-  return { OWNER: '空间所有者', ADMIN: '管理员', EDITOR: '内容编辑', FULFILLMENT: '交付运营', ANALYST: '数据分析' }[role]
-}
-
-function applicationStatusLabel(status?: OperatorSession['application_status']) {
-  return { PENDING: '审核中', REVIEWING: '复核中', APPROVED: '已通过', REJECTED: '未通过' }[status ?? 'PENDING']
-}
-
-function platformRoleLabel(role: OperatorSession['platform_role']) {
-  if (!role) return '租户成员'
-  return { PLATFORM_OWNER: '平台所有者', PLATFORM_SUPPORT: '平台支持', PLATFORM_AUDITOR: '平台审计' }[role]
 }
 
 function AssetUpload({ token, productId, enabled, onUploaded, onError }: { token: string; productId: string; enabled: boolean; onUploaded: () => Promise<void> | void; onError: (error: Error) => void }) {

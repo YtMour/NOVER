@@ -1,5 +1,27 @@
 import { z } from 'zod'
-import type { AdminActivityResponse, Asset, Delivery, DownloadTicket, JoinApplication, OperatorLoginResponse, OperatorSession, PlatformSettings, Product, ProductDraftInput, ProductImage, ProductList, ProductRelease, RedeemResponse, TenantMember } from '../types'
+import type {
+  AdminActivityResponse,
+  Asset,
+  AuditEventList,
+  AuditEventQuery,
+  CodeAction,
+  Delivery,
+  DownloadTicket,
+  JoinApplication,
+  MemberCreateInput,
+  MemberPatchInput,
+  OperatorLoginResponse,
+  OperatorSession,
+  OperatorSessionsResponse,
+  PlatformSettings,
+  Product,
+  ProductDraftInput,
+  ProductImage,
+  ProductList,
+  ProductRelease,
+  RedeemResponse,
+  TenantMember,
+} from '../types'
 import { OPERATOR_API_PATH } from './routes'
 
 export class ApiError extends Error {
@@ -105,7 +127,77 @@ export function revokeOperatorSession(token: string) {
 }
 
 export function loadTenantMembers(token: string) {
-  return request<{ tenant_id: string; tenant_name: string; items: TenantMember[] }>(operatorEndpoint('/members'), { headers: withBearer(token) })
+  return request<{ tenant_id?: string; tenant_name?: string; items: TenantMember[] }>(operatorEndpoint('/members'), { headers: withBearer(token) })
+}
+
+const memberRoleSchema = z.enum(['ADMIN', 'EDITOR', 'FULFILLMENT', 'ANALYST'])
+const memberStatusSchema = z.enum(['ACTIVE', 'SUSPENDED'])
+
+export function createTenantMember(token: string, input: MemberCreateInput) {
+  const payload = z.object({
+    username: z.string().trim().toLowerCase().regex(/^[a-z][a-z0-9_-]{3,31}$/),
+    display_name: z.string().trim().min(2).max(80),
+    password: z.string().min(8).max(200),
+    role: memberRoleSchema,
+  }).parse(input)
+  return request<TenantMember>(operatorEndpoint('/members'), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateTenantMember(token: string, membershipId: string, patch: MemberPatchInput) {
+  const payload = z.object({ role: memberRoleSchema.optional(), status: memberStatusSchema.optional() }).parse(patch)
+  return request<TenantMember>(operatorEndpoint(`/members/${encodeURIComponent(membershipId)}`), {
+    method: 'PATCH',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function loadOperatorSessions(token: string) {
+  return request<OperatorSessionsResponse>(operatorEndpoint('/sessions'), { headers: withBearer(token) })
+}
+
+export function revokeOperatorSessionById(token: string, sessionId: string) {
+  return request<void>(operatorEndpoint(`/sessions/${encodeURIComponent(sessionId)}/revoke`), { method: 'POST', headers: withBearer(token) })
+}
+
+export function revokeOtherOperatorSessions(token: string) {
+  return request<{ revoked: number }>(operatorEndpoint('/sessions/revoke-others'), { method: 'POST', headers: withBearer(token) })
+}
+
+export function changeOperatorPassword(token: string, currentPassword: string, newPassword: string) {
+  const payload = z.object({
+    current_password: z.string().min(1).max(200),
+    new_password: z.string().min(8).max(200),
+  }).parse({ current_password: currentPassword, new_password: newPassword })
+  return request<void>(operatorEndpoint('/password'), {
+    method: 'POST',
+    headers: { ...withBearer(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+const auditQuerySchema = z.object({
+  limit: z.number().int().min(1).max(200),
+  offset: z.number().int().min(0),
+  action: z.string().trim().max(64),
+  resource_type: z.string().trim().max(64),
+})
+
+export function loadAuditEvents(token: string, query: AuditEventQuery = {}) {
+  const input = auditQuerySchema.parse({
+    limit: query.limit ?? 20,
+    offset: query.offset ?? 0,
+    action: query.action ?? '',
+    resource_type: query.resource_type ?? '',
+  })
+  const params = new URLSearchParams({ limit: String(input.limit), offset: String(input.offset) })
+  if (input.action) params.set('action', input.action)
+  if (input.resource_type) params.set('resource_type', input.resource_type)
+  return request<AuditEventList>(operatorEndpoint(`/audit-events?${params.toString()}`), { headers: withBearer(token) })
 }
 
 export async function redeemCode(code: string) {
@@ -134,25 +226,54 @@ export function loadActivity(token: string) {
   return request<AdminActivityResponse>(operatorEndpoint('/activity'), { headers: withBearer(token) })
 }
 
-export function updateCodeAction(token: string, codeId: string, action: 'SUSPEND' | 'RESUME' | 'REVOKE') {
+const codeActionSchema = z.enum(['SUSPEND', 'RESUME', 'REVOKE', 'REFUND'])
+
+export function updateCodeAction(token: string, codeId: string, action: CodeAction, reason?: string) {
+  const trimmedReason = reason ? Array.from(reason.trim()).slice(0, 300).join('') : ''
+  const payload = z.object({ action: codeActionSchema, reason: z.string().refine((value) => Array.from(value).length <= 300, '退款原因不能超过 300 字').optional() }).parse({
+    action,
+    ...(trimmedReason ? { reason: trimmedReason } : {}),
+  })
   return request<{ status: string }>(operatorEndpoint(`/codes/${codeId}/action`), {
     method: 'POST',
     headers: { ...withBearer(token), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action }),
+    body: JSON.stringify(payload),
   })
 }
 
-export function createProduct(token: string, name: string, description: string, detail: string, status: 'DRAFT' | 'ACTIVE' = 'DRAFT') {
-  const input = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(2000), detail: z.string().trim().max(6000), status: z.enum(['DRAFT', 'ACTIVE']) }).parse({ name, description, detail, status })
+const updatePolicySchema = z.enum(['LIFETIME', 'TILL_DATE', 'CURRENT_ONLY'])
+const rfc3339Timestamp = z.string().trim().min(1).max(64).refine((value) => !Number.isNaN(Date.parse(value)), '时间必须是 RFC3339 格式')
+
+const productDraftSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2000),
+  detail: z.string().trim().max(6000),
+  highlights: z.array(z.string().trim().min(1).max(120)).max(8),
+  license_terms: z.string().trim().max(2000),
+  requirements: z.string().trim().max(2000),
+  support_period: z.string().trim().max(120),
+  update_policy: updatePolicySchema,
+  update_until: rfc3339Timestamp.nullable(),
+}).superRefine((value, ctx) => {
+  if (value.update_policy === 'TILL_DATE' && !value.update_until) {
+    ctx.addIssue({ code: 'custom', path: ['update_until'], message: '更新策略为 TILL_DATE 时必须填写 update_until' })
+  }
+  if (value.update_policy !== 'TILL_DATE' && value.update_until) {
+    ctx.addIssue({ code: 'custom', path: ['update_until'], message: '仅 TILL_DATE 策略可以填写 update_until' })
+  }
+})
+
+export function createProduct(token: string, draft: ProductDraftInput, status: 'DRAFT' | 'ACTIVE' = 'DRAFT') {
+  const input = productDraftSchema.parse(draft)
   return request<Product>(operatorEndpoint('/products'), {
     method: 'POST',
     headers: { ...withBearer(token), 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, status }),
   })
 }
 
 export function updateProduct(token: string, productId: string, draft: ProductDraftInput) {
-  const input = z.object({ name: z.string().trim().min(1).max(120), description: z.string().trim().max(2000), detail: z.string().trim().max(6000) }).parse(draft)
+  const input = productDraftSchema.parse(draft)
   return request<Product>(operatorEndpoint(`/products/${productId}`), {
     method: 'PUT',
     headers: { ...withBearer(token), 'Content-Type': 'application/json' },

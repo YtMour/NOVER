@@ -144,7 +144,10 @@ operator_sessions
   revoked_at, created_at, last_seen_at
 
 products
-  id, tenant_id, owner_user_id, name, description, detail, status(DRAFT/ACTIVE/ARCHIVED), created_at
+  id, tenant_id, owner_user_id, name, description, detail,
+  highlights, license_terms, requirements, support_period,
+  update_policy(LIFETIME/TILL_DATE/CURRENT_ONLY), update_until,
+  status(DRAFT/ACTIVE/ARCHIVED), created_at
 
 product_releases
   id, tenant_id, product_id, version, changelog, status(DRAFT/PUBLISHED/ARCHIVED),
@@ -158,11 +161,12 @@ assets
 
 redeem_codes
   id, tenant_id, product_id, release_id, code_hmac, display_suffix, status, external_order_ref,
-  expires_at, access_days, max_downloads, redeemed_at, entitlement_id
+  expires_at, access_days, max_downloads, redeemed_at, entitlement_id,
+  update_policy, update_until
 
 entitlements
   id, tenant_id, redeem_code_id, product_id, release_id, access_token_hash, status, valid_until,
-  max_downloads, downloads_issued, created_at
+  max_downloads, downloads_issued, update_policy, update_until, created_at
 
 download_tickets
   id, tenant_id, entitlement_id, asset_id, token_hash, expires_at, created_at
@@ -184,7 +188,7 @@ platform_settings
 
 `redeem_codes.product_id` 标识买家购买的商品，`redeem_codes.release_id` 标识签发时选择的已发布起始版本。兑换流程将两者复制到权益；租户/商品/版本复合外键阻止跨租户、跨商品或跨版本错配。每批兑换码只对应工作台中选中的一个商品和一个起始版本。
 
-商品版本以 SemVer 记录在 `product_releases` 中。交付文件通过 `assets.release_id` 绑定版本草稿；只有商品已发布且该版本至少有一个文件时才能发布。交付查询返回通用文件，以及权益基础版本发布时点之后的已发布版本文件。已被兑换码引用的发布版本不能撤回，避免既有权益失去基线。
+商品版本以 SemVer 记录在 `product_releases` 中。交付文件通过 `assets.release_id` 绑定版本草稿；只有商品已发布且该版本至少有一个文件时才能发布。交付查询返回通用文件、权益起始版本，以及按权益更新策略允许的后续已发布版本。更新策略在兑换码签发时从商品快照，兑换时复制到权益：`LIFETIME` 为起始版本+之后所有已发布版本，`TILL_DATE` 额外要求发布时点不晚于 `update_until`，`CURRENT_ONLY` 仅起始版本；起始版本本身始终可见。已被兑换码引用的发布版本不能撤回，避免既有权益失去基线。
 
 实际建表时需要加唯一约束：
 
@@ -245,9 +249,11 @@ MVP 使用 `private-assets` Docker 卷保存文件，应用数据库只记录对
 ## 8. 安全边界
 
 - MVP 运营工作台使用 bcrypt 数据库密码换取 8 小时 HMAC 会话；服务端逐请求确认账号、成员关系、租户、角色和撤销状态。公开申请的期望密码同样只保存 bcrypt 哈希，待审成员可以登录但权限集合为空。开发首次启动引导 `admin/admin`，生产版本拒绝默认凭证并需接入正式 MFA。
-- 管理后台与公开兑换 API 使用不同权限中间件。
+- 管理后台与公开兑换 API 使用不同权限中间件。租户角色新增 `member.manage` 与 `audit.read`：仅 OWNER/ADMIN 可以创建成员、调整角色/状态、查看租户审计日志；成员暂停会撤销其会话。
+- 账号安全：支持修改密码（保留当前会话、撤销其他设备）、查看并撤销自己的会话；运营登录限流为 30 次/分钟/IP。
+- 退款为运营手工动作：将兑换码标记 `REFUNDED` 并将关联权益 `REVOKED`，原因写入审计事件；外部平台退款自动同步仍待实现。
 - 兑换码只保存 HMAC/哈希；密钥从环境变量或密钥管理系统注入。
-- MVP 记录商品创建、文件上传、兑换码签发、凭证状态变更和下载开始事件；业务审计事件已绑定当前租户，退款联动与审计检索仍待实现。
+- MVP 记录商品创建、文件上传、兑换码签发、凭证状态变更、退款与下载开始事件；业务审计事件已绑定当前租户，并提供租户审计日志查询；外部平台退款自动同步仍待实现。
 - 每个 API 请求输出结构化访问日志（`request_id`、`method`、`path`、`route`、`status`、`duration_ms`、`ip`），响应头返回 `X-Request-Id`；健康检查不写访问日志。`/api/v1/meta` 公开版本、提交与环境信息。
 - 兑换、票据签发和上传有进程内按 IP 限流；超限返回 `429` 与 `Retry-After` 秒数。重启会清空计数，多实例需要共享限流方案。
 - 下载事件当前不记录 IP 或 User-Agent。
@@ -282,10 +288,15 @@ MVP 使用 `private-assets` Docker 卷，适合单实例功能验证。后续可
 | 限额和短时下载票据 | 已实现 |
 | 商品版本、版本文件与更新权限 | 已实现；发布版本必须有文件，基础版本被签发后不可撤回 |
 | 数据库运营账号与可撤销会话 | 已实现；TOTP/Passkey、密码重置待实现 |
+| 商品结构化资料与公开详情接口 | 已实现（亮点/授权/技术要求/支持期/更新策略） |
+| 更新策略快照与交付过滤 | 已实现（LIFETIME / TILL_DATE / CURRENT_ONLY） |
+| 手工退款与权益收回 | 已实现；外部平台退款自动同步待实现 |
+| 成员管理、改密与会话管理 | 已实现；MFA、邀请设密、全设备策略待完善 |
+| 租户审计日志查询 | 已实现；导出与检索优化待实现 |
 | 版本化数据库迁移与校验和 | 已实现；历史安装自动基线与回滚 |
 | 维护清理命令（会话/票据/权益/孤儿文件） | 已实现；自动调度待接入 |
 | 结构化访问日志、请求 ID 与构建信息 | 已实现 |
 | CI、跨平台 QA 与一键验证 | 已实现 |
 | S3 对象存储和文件扫描 | 待实现 |
 | 凭证暂停、恢复、撤销及活动记录 | 已实现 |
-| 退款联动、审计检索和备份恢复 | 待实现 |
+| 退款与审计 | 手工退款（权益立即失效并留痕）、租户审计日志查询已实现；外部平台退款同步、审计导出与备份恢复待实现 |

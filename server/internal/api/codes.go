@@ -47,8 +47,9 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var productStatus string
-	if err := tx.QueryRow(r.Context(), `SELECT status FROM products WHERE id=$1 AND tenant_id=$2 FOR SHARE`, productID, requestTenantID(r)).Scan(&productStatus); errors.Is(err, pgx.ErrNoRows) {
+	var productStatus, updatePolicy string
+	var updateUntil *time.Time
+	if err := tx.QueryRow(r.Context(), `SELECT status, update_policy, update_until FROM products WHERE id=$1 AND tenant_id=$2 FOR SHARE`, productID, requestTenantID(r)).Scan(&productStatus, &updatePolicy, &updateUntil); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "product_not_found", "Product was not found.")
 		return
 	} else if err != nil {
@@ -97,7 +98,7 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		normalized := normalizeCode(code)
-		_, err = tx.Exec(r.Context(), `INSERT INTO redeem_codes (id, tenant_id, product_id, release_id, code_hmac, display_suffix, external_order_ref, expires_at, access_days, max_downloads) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, id, requestTenantID(r), productID, input.ReleaseID, hashCode(a.cfg.RedeemHMACKey, normalized), normalized[len(normalized)-4:], cleanOrderRef(input.ExternalOrderRef), expires, input.AccessDays, input.MaxDownloads)
+		_, err = tx.Exec(r.Context(), `INSERT INTO redeem_codes (id, tenant_id, product_id, release_id, code_hmac, display_suffix, external_order_ref, expires_at, access_days, max_downloads, update_policy, update_until) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`, id, requestTenantID(r), productID, input.ReleaseID, hashCode(a.cfg.RedeemHMACKey, normalized), normalized[len(normalized)-4:], cleanOrderRef(input.ExternalOrderRef), expires, input.AccessDays, input.MaxDownloads, updatePolicy, updateUntil)
 		if err != nil {
 			a.logError(r, "save redeem code failed", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
@@ -121,5 +122,5 @@ func (a *App) createCodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Codes could not be created.")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"codes": issued, "code_ttl_until": expires, "access_days": input.AccessDays, "max_downloads": input.MaxDownloads, "release_id": input.ReleaseID, "release_version": releaseVersion})
+	writeJSON(w, http.StatusCreated, map[string]any{"codes": issued, "code_ttl_until": expires, "access_days": input.AccessDays, "max_downloads": input.MaxDownloads, "release_id": input.ReleaseID, "release_version": releaseVersion, "update_policy": updatePolicy, "update_until": updateUntil})
 }

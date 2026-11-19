@@ -20,6 +20,10 @@ $suites = @(
   [pscustomobject]@{
     Name   = '租户隔离与商户交付'
     Script = (Join-Path $PSScriptRoot 'tenant-delivery-smoke.ps1')
+  },
+  [pscustomobject]@{
+    Name   = '运营能力（商品资料/退款/成员/审计）'
+    Script = (Join-Path $PSScriptRoot 'operator-capabilities-smoke.ps1')
   }
 )
 

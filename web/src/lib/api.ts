@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { Delivery, DownloadTicket, ProductList, RedeemResponse } from '../types'
+import type { Delivery, DownloadTicket, Product, ProductList, RedeemResponse } from '../types'
 
 export class ApiError extends Error {
   constructor(message: string, readonly code: string, readonly status: number, readonly retryAfter?: number) {
@@ -62,6 +62,12 @@ export function loadServiceHealth() {
 
 export function loadPublicProducts(spaceSlug?: string) {
   return request<ProductList>(spaceSlug ? `/api/v1/spaces/${encodeURIComponent(spaceSlug)}/products` : '/api/v1/products')
+}
+
+/** 公开商品详情：不存在或已下架时后端返回 404 product_not_found。 */
+export function loadProductDetail(productID: string, spaceSlug?: string) {
+  const productPath = `/products/${encodeURIComponent(productID)}`
+  return request<Product>(spaceSlug ? `/api/v1/spaces/${encodeURIComponent(spaceSlug)}${productPath}` : `/api/v1${productPath}`)
 }
 
 export function submitJoinApplication(input: { organization_name: string; contact_name: string; email: string; desired_username: string; expected_password: string; use_case: string }) {

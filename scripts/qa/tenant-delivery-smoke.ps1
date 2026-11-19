@@ -31,7 +31,10 @@ $asset = $null
 function Api([string]$method, [string]$path, $body = $null, $headers = $null) {
   $params = @{ Method = $method; Uri = "$base$path" }
   if ($headers) { $params.Headers = $headers }
-  if ($null -ne $body) { $params.ContentType = 'application/json'; $params.Body = ($body | ConvertTo-Json -Depth 8) }
+  if ($null -ne $body) {
+    $params.ContentType = 'application/json; charset=utf-8'
+    $params.Body = [System.Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Depth 8))
+  }
   Invoke-RestMethod @params
 }
 
